@@ -31,6 +31,7 @@
 #include "materials/materialManager.h"
 #include "forest/windDeformation.h"
 
+using namespace Torque;
 
 IMPLEMENT_CO_DATABLOCK_V1(TSForestItemData);
 
@@ -41,8 +42,8 @@ ConsoleDocClass( TSForestItemData,
 );
 
 TSForestItemData::TSForestItemData()
-   :  mShapeInstance( NULL ),
-      mIsClientObject( false )
+   :  mIsClientObject( false ),
+      mShapeInstance( NULL )
 {
 }
 

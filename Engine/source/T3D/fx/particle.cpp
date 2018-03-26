@@ -19,8 +19,15 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
+
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "particle.h"
 #include "console/consoleTypes.h"
+#include "console/typeValidators.h"
 #include "core/stream/bitStream.h"
 #include "math/mRandom.h"
 #include "math/mathIO.h"
@@ -65,12 +72,14 @@ ConsoleDocClass( ParticleData,
    "@see ParticleEmitterNode\n"
 );
 
-static const float sgDefaultWindCoefficient = 0.0f;
-static const float sgDefaultConstantAcceleration = 0.f;
-static const float sgDefaultSpinSpeed = 1.f;
-static const float sgDefaultSpinRandomMin = 0.f;
-static const float sgDefaultSpinRandomMax = 0.f;
+static const F32 sgDefaultWindCoefficient = 0.0f;
+static const F32 sgDefaultConstantAcceleration = 0.f;
+static const F32 sgDefaultSpinSpeed = 1.f;
+static const F32 sgDefaultSpinRandomMin = 0.f;
+static const F32 sgDefaultSpinRandomMax = 0.f;
 
+static const F32 sgDefaultSpinBias = 1.0f;
+static const F32 sgDefaultSizeBias = 1.0f;
 
 //-----------------------------------------------------------------------------
 // Constructor
@@ -101,9 +110,9 @@ ParticleData::ParticleData()
    }
 
    times[0] = 0.0f;
-   times[1] = 0.33f;
-   times[2] = 0.66f;
-   times[3] = 1.0f;
+   times[1] = 1.0f;
+   for (i = 2; i < PDC_NUM_KEYS; i++)
+     times[i] = -1.0f;
 
    texCoords[0].set(0.0,0.0);   // texture coords at 4 corners
    texCoords[1].set(0.0,1.0);   // of particle quad
@@ -114,31 +123,37 @@ ParticleData::ParticleData()
    animTexUVs = NULL;           // array of tile vertex UVs
    textureName = NULL;          // texture filename
    textureHandle = NULL;        // loaded texture handle
+   textureExtName = NULL;
+   textureExtHandle = NULL;
+   constrain_pos = false;
+   start_angle = 0.0f;
+   angle_variance = 0.0f;
+   sizeBias = sgDefaultSizeBias;
+   spinBias = sgDefaultSpinBias;
+   randomizeSpinDir = false;
 }
 
 //-----------------------------------------------------------------------------
 // Destructor
 //-----------------------------------------------------------------------------
-ParticleData::~ParticleData()
-{
-   if (animTexUVs)
-   {
-      delete [] animTexUVs;
-   }
-}
+
+
+FRangeValidator dragCoefFValidator(0.f, 5.f);
+FRangeValidator gravCoefFValidator(-10.f, 10.f);
+FRangeValidator spinRandFValidator(-1000.f, 1000.f);
 
 //-----------------------------------------------------------------------------
 // initPersistFields
 //-----------------------------------------------------------------------------
 void ParticleData::initPersistFields()
 {
-   addField( "dragCoefficient", TYPEID< F32 >(), Offset(dragCoefficient, ParticleData),
+   addFieldV( "dragCoefficient", TYPEID< F32 >(), Offset(dragCoefficient, ParticleData), &dragCoefFValidator,
       "Particle physics drag amount." );
    addField( "windCoefficient", TYPEID< F32 >(), Offset(windCoefficient, ParticleData),
       "Strength of wind on the particles." );
-   addField( "gravityCoefficient", TYPEID< F32 >(), Offset(gravityCoefficient, ParticleData),
+   addFieldV( "gravityCoefficient", TYPEID< F32 >(), Offset(gravityCoefficient, ParticleData), &gravCoefFValidator,
       "Strength of gravity on the particles." );
-   addField( "inheritedVelFactor", TYPEID< F32 >(), Offset(inheritedVelFactor, ParticleData),
+   addFieldV( "inheritedVelFactor", TYPEID< F32 >(), Offset(inheritedVelFactor, ParticleData), &CommonValidators::NormalizedFloat,
       "Amount of emitter velocity to add to particle initial velocity." );
    addField( "constantAcceleration", TYPEID< F32 >(), Offset(constantAcceleration, ParticleData),
       "Constant acceleration to apply to this particle." );
@@ -148,10 +163,10 @@ void ParticleData::initPersistFields()
       "Variance in lifetime of particle, from 0 - lifetimeMS." );
    addField( "spinSpeed", TYPEID< F32 >(), Offset(spinSpeed, ParticleData),
       "Speed at which to spin the particle." );
-   addField( "spinRandomMin", TYPEID< F32 >(), Offset(spinRandomMin, ParticleData),
-      "Minimum allowed spin speed of this particle, between -10000 and spinRandomMax." );
-   addField( "spinRandomMax", TYPEID< F32 >(), Offset(spinRandomMax, ParticleData),
-      "Maximum allowed spin speed of this particle, between spinRandomMin and 10000." );
+   addFieldV( "spinRandomMin", TYPEID< F32 >(), Offset(spinRandomMin, ParticleData), &spinRandFValidator,
+      "Minimum allowed spin speed of this particle, between -1000 and spinRandomMax." );
+   addFieldV( "spinRandomMax", TYPEID< F32 >(), Offset(spinRandomMax, ParticleData), &spinRandFValidator,
+      "Maximum allowed spin speed of this particle, between spinRandomMin and 1000." );
    addField( "useInvAlpha", TYPEID< bool >(), Offset(useInvAlpha, ParticleData),
       "@brief Controls how particles blend with the scene.\n\n"
       "If true, particles blend like ParticleBlendStyle NORMAL, if false, "
@@ -195,11 +210,12 @@ void ParticleData::initPersistFields()
       "Deprecated. Use textureName instead." );
 
    // Interpolation variables
-   addField( "colors", TYPEID< ColorF >(), Offset(colors, ParticleData), PDC_NUM_KEYS,
+   addField( "colors", TYPEID< LinearColorF >(), Offset(colors, ParticleData), PDC_NUM_KEYS,
       "@brief Particle RGBA color keyframe values.\n\n"
       "The particle color will linearly interpolate between the color/time keys "
       "over the lifetime of the particle." );
-   addField( "sizes", TYPEID< F32 >(), Offset(sizes, ParticleData), PDC_NUM_KEYS,
+   addProtectedField( "sizes", TYPEID< F32 >(), Offset(sizes, ParticleData), &protectedSetSizes, 
+      &defaultProtectedGetFn, PDC_NUM_KEYS,
       "@brief Particle size keyframe values.\n\n"
       "The particle size will linearly interpolate between the size/time keys "
       "over the lifetime of the particle." );
@@ -208,6 +224,15 @@ void ParticleData::initPersistFields()
       "@brief Time keys used with the colors and sizes keyframes.\n\n"
       "Values are from 0.0 (particle creation) to 1.0 (end of lifespace)." );
 
+   addGroup("AFX"); 
+   addField("textureExtName",       TypeFilename, Offset(textureExtName,     ParticleData));
+   addField("constrainPos",         TypeBool,     Offset(constrain_pos,      ParticleData));
+   addField("angle",                TypeF32,      Offset(start_angle,        ParticleData));
+   addField("angleVariance",        TypeF32,      Offset(angle_variance,     ParticleData));
+   addField("sizeBias",             TypeF32,      Offset(sizeBias,           ParticleData));
+   addField("spinBias",             TypeF32,      Offset(spinBias,           ParticleData));
+   addField("randomizeSpinDir",     TypeBool,     Offset(randomizeSpinDir,   ParticleData));
+   endGroup("AFX"); 
    Parent::initPersistFields();
 }
 
@@ -237,18 +262,22 @@ void ParticleData::packData(BitStream* stream)
       stream->writeInt((S32)(spinRandomMin + 1000), 11);
       stream->writeInt((S32)(spinRandomMax + 1000), 11);
    }
+   if(stream->writeFlag(spinBias != sgDefaultSpinBias))
+      stream->write(spinBias);
+   stream->writeFlag(randomizeSpinDir);
    stream->writeFlag(useInvAlpha);
 
    S32 i, count;
 
    // see how many frames there are:
-   for(count = 0; count < 3; count++)
+   for(count = 0; count < ParticleData::PDC_NUM_KEYS-1; count++)
       if(times[count] >= 1)
          break;
 
    count++;
 
-   stream->writeInt(count-1, 2);
+   // An extra bit is needed for 8 keys.
+   stream->writeInt(count-1, 3);
 
    for( i=0; i<count; i++ )
    {
@@ -256,7 +285,8 @@ void ParticleData::packData(BitStream* stream)
       stream->writeFloat( colors[i].green, 7);
       stream->writeFloat( colors[i].blue, 7);
       stream->writeFloat( colors[i].alpha, 7);
-      stream->writeFloat( sizes[i]/MaxParticleSize, 14);
+      // AFX bits raised from 14 to 16 to allow larger sizes
+      stream->writeFloat( sizes[i]/MaxParticleSize, 16);
       stream->writeFloat( times[i], 8);
    }
 
@@ -273,6 +303,13 @@ void ParticleData::packData(BitStream* stream)
       mathWrite(*stream, animTexTiling);
       stream->writeInt(framesPerSec, 8);
    }
+   if (stream->writeFlag(textureExtName && textureExtName[0]))
+     stream->writeString(textureExtName);
+   stream->writeFlag(constrain_pos);
+   stream->writeFloat(start_angle/360.0f, 11);
+   stream->writeFloat(angle_variance/180.0f, 10);
+   if(stream->writeFlag(sizeBias != sgDefaultSizeBias))
+      stream->write(sizeBias);
 }
 
 //-----------------------------------------------------------------------------
@@ -316,17 +353,24 @@ void ParticleData::unpackData(BitStream* stream)
       spinRandomMax = sgDefaultSpinRandomMax;
    }
 
+   if(stream->readFlag())
+      stream->read(&spinBias);
+   else
+      spinBias = sgDefaultSpinBias;
+   randomizeSpinDir = stream->readFlag();
    useInvAlpha = stream->readFlag();
 
    S32 i;
-   S32 count = stream->readInt(2) + 1;
+   // An extra bit is needed for 8 keys.
+   S32 count = stream->readInt(3) + 1;
    for(i = 0;i < count; i++)
    {
       colors[i].red = stream->readFloat(7);
       colors[i].green = stream->readFloat(7);
       colors[i].blue = stream->readFloat(7);
       colors[i].alpha = stream->readFloat(7);
-      sizes[i] = stream->readFloat(14) * MaxParticleSize;
+      // AFX bits raised from 14 to 16 to allow larger sizes
+      sizes[i] = stream->readFloat(16) * MaxParticleSize;
       times[i] = stream->readFloat(8);
    }
    textureName = (stream->readFlag()) ? stream->readSTString() : 0;
@@ -340,6 +384,30 @@ void ParticleData::unpackData(BitStream* stream)
      mathRead(*stream, &animTexTiling);
      framesPerSec = stream->readInt(8);
    }
+   textureExtName = (stream->readFlag()) ? stream->readSTString() : 0;
+   constrain_pos = stream->readFlag();
+   start_angle = 360.0f*stream->readFloat(11);
+   angle_variance = 180.0f*stream->readFloat(10);
+   if(stream->readFlag())
+      stream->read(&sizeBias);
+   else
+      sizeBias = sgDefaultSizeBias;
+}
+
+bool ParticleData::protectedSetSizes( void *object, const char *index, const char *data) 
+{
+   ParticleData *pData = static_cast<ParticleData*>( object );
+   F32 val = dAtof(data);
+   U32 i;
+
+   if (!index)
+      return (val >= 0.f && val <= MaxParticleSize);
+   else
+      i = dAtoui(index);
+
+   pData->sizes[i] = mClampF( val, 0.f, MaxParticleSize );
+
+   return false;
 }
 
 bool ParticleData::protectedSetTimes( void *object, const char *index, const char *data) 
@@ -349,13 +417,13 @@ bool ParticleData::protectedSetTimes( void *object, const char *index, const cha
    U32 i;
 
    if (!index)
-      i = 0;
+      return (val >= 0.f && val <= 1.f);
    else
       i = dAtoui(index);
 
    pData->times[i] = mClampF( val, 0.f, 1.f );
 
-   return true;
+   return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -378,11 +446,11 @@ bool ParticleData::onAdd()
       Con::warnf(ConsoleLogEntry::General, "ParticleData(%s) lifetimeVariance >= lifetime", getName());
       lifetimeVarianceMS = lifetimeMS - 1;
    }
-   if (spinSpeed > 10000.0 || spinSpeed < -10000.0) {
+   if (spinSpeed > 1000.f || spinSpeed < -1000.f) {
       Con::warnf(ConsoleLogEntry::General, "ParticleData(%s) spinSpeed invalid", getName());
       return false;
    }
-   if (spinRandomMin > 10000.0 || spinRandomMin < -10000.0) {
+   if (spinRandomMin > 1000.f || spinRandomMin < -1000.f) {
       Con::warnf(ConsoleLogEntry::General, "ParticleData(%s) spinRandomMin invalid", getName());
       spinRandomMin = -360.0;
       return false;
@@ -392,7 +460,7 @@ bool ParticleData::onAdd()
       spinRandomMin = spinRandomMax - (spinRandomMin - spinRandomMax );
       return false;
    }
-   if (spinRandomMax > 10000.0 || spinRandomMax < -10000.0) {
+   if (spinRandomMax > 1000.f || spinRandomMax < -1000.f) {
       Con::warnf(ConsoleLogEntry::General, "ParticleData(%s) spinRandomMax invalid", getName());
       spinRandomMax = 360.0;
       return false;
@@ -405,11 +473,33 @@ bool ParticleData::onAdd()
    }
 
    times[0] = 0.0f;
-   for (U32 i = 1; i < 4; i++) {
-      if (times[i] < times[i-1]) {
-         Con::warnf(ConsoleLogEntry::General, "ParticleData(%s) times[%d] < times[%d]", getName(), i, i-1);
-         times[i] = times[i-1];
-      }
+   for (U32 i = 1; i < PDC_NUM_KEYS; i++) 
+   {
+     if (times[i] < 0.0f)
+       break;
+     if (times[i] < times[i-1]) 
+     {
+       Con::warnf(ConsoleLogEntry::General, "ParticleData(%s) times[%d] < times[%d]", getName(), i, i-1);
+       times[i] = times[i-1];
+     }
+   }
+
+   times[0] = 0.0f;
+
+   U32 last_idx = 0;
+   for (U32 i = 1; i < PDC_NUM_KEYS; i++)
+   {
+     if (times[i] < 0.0f)
+       break;
+     else
+       last_idx = i;
+   }
+
+   for (U32 i = last_idx+1; i < PDC_NUM_KEYS; i++) 
+   {
+      times[i] = times[last_idx];
+      colors[i] = colors[last_idx];
+      sizes[i] = sizes[last_idx];
    }
 
    // Here we validate parameters
@@ -448,6 +538,10 @@ bool ParticleData::onAdd()
      }
    }
 
+   start_angle = mFmod(start_angle, 360.0f);
+   if (start_angle < 0.0f)
+     start_angle += 360.0f;
+   angle_variance = mClampF(angle_variance, -180.0f, 180.0f);
    return true;
 }
 
@@ -466,12 +560,21 @@ bool ParticleData::preload(bool server, String &errorStr)
       // texture is *not* an error since the emitter may provide one.
       if (textureName && textureName[0])
       {
-        textureHandle = GFXTexHandle(textureName, &GFXDefaultStaticDiffuseProfile, avar("%s() - textureHandle (line %d)", __FUNCTION__, __LINE__));
+        textureHandle = GFXTexHandle(textureName, &GFXStaticTextureSRGBProfile, avar("%s() - textureHandle (line %d)", __FUNCTION__, __LINE__));
         if (!textureHandle)
         {
           errorStr = String::ToString("Missing particle texture: %s", textureName);
           error = true;
         }
+      }
+      if (textureExtName && textureExtName[0])
+      {
+         textureExtHandle = GFXTexHandle(textureExtName, &GFXStaticTextureSRGBProfile, avar("%s() - textureExtHandle (line %d)", __FUNCTION__, __LINE__));
+         if (!textureExtHandle)
+         {
+            errorStr = String::ToString("Missing particle texture: %s", textureName);
+            error = true;
+         }
       }
 
       if (animateTexture) 
@@ -491,8 +594,9 @@ bool ParticleData::preload(bool server, String &errorStr)
 
         animTexFrames.clear();
 
-        char* tokCopy = new char[dStrlen(animTexFramesString) + 1];
-        dStrcpy(tokCopy, animTexFramesString);
+        dsize_t tokLen = dStrlen(animTexFramesString) + 1;
+        char* tokCopy = new char[tokLen];
+        dStrcpy(tokCopy, animTexFramesString, tokLen);
 
         char* currTok = dStrtok(tokCopy, " \t");
         while (currTok != NULL) 
@@ -584,6 +688,11 @@ void ParticleData::initializeParticle(Particle* init, const Point3F& inheritVelo
 
    // assign spin amount
    init->spinSpeed = spinSpeed * gRandGen.randF( spinRandomMin, spinRandomMax );
+   // apply spin bias
+   init->spinSpeed *= spinBias;
+   // randomize spin direction
+   if (randomizeSpinDir && (gRandGen.randI( 0, 1 ) == 1))
+     init->spinSpeed = -init->spinSpeed;
 }
 
 bool ParticleData::reload(char errorBuffer[256])
@@ -591,7 +700,7 @@ bool ParticleData::reload(char errorBuffer[256])
    bool error = false;
 	if (textureName && textureName[0])
    {
-        textureHandle = GFXTexHandle(textureName, &GFXDefaultStaticDiffuseProfile, avar("%s() - textureHandle (line %d)", __FUNCTION__, __LINE__));
+        textureHandle = GFXTexHandle(textureName, &GFXStaticTextureSRGBProfile, avar("%s() - textureHandle (line %d)", __FUNCTION__, __LINE__));
         if (!textureHandle)
         {
 				dSprintf(errorBuffer, 256, "Missing particle texture: %s", textureName);
@@ -600,7 +709,7 @@ bool ParticleData::reload(char errorBuffer[256])
 	}
    /*
    numFrames = 0;
-   for( int i=0; i<PDC_MAX_TEX; i++ )
+   for( S32 i=0; i<PDC_MAX_TEX; i++ )
    {
       if( textureNameList[i] && textureNameList[i][0] )
       {
@@ -630,4 +739,79 @@ DefineEngineMethod(ParticleData, reload, void, (),,
 {
    char errorBuffer[256];
    object->reload(errorBuffer);
+}
+//#define TRACK_PARTICLE_DATA_CLONES
+
+#ifdef TRACK_PARTICLE_DATA_CLONES
+static int particle_data_clones = 0;
+#endif
+
+ParticleData::ParticleData(const ParticleData& other, bool temp_clone) : SimDataBlock(other, temp_clone)
+{
+#ifdef TRACK_PARTICLE_DATA_CLONES
+   particle_data_clones++;
+   if (particle_data_clones == 1)
+     Con::errorf("ParticleData -- Clones are on the loose!");
+#endif
+
+  dragCoefficient = other.dragCoefficient;
+  windCoefficient = other.windCoefficient;
+  gravityCoefficient = other.gravityCoefficient;
+  inheritedVelFactor = other.inheritedVelFactor;
+  constantAcceleration = other.constantAcceleration;
+  lifetimeMS = other.lifetimeMS;
+  lifetimeVarianceMS = other.lifetimeVarianceMS;
+  spinSpeed = other.spinSpeed;
+  spinRandomMin = other.spinRandomMin;
+  spinRandomMax = other.spinRandomMax;
+  useInvAlpha = other.useInvAlpha;
+  animateTexture = other.animateTexture;
+  numFrames = other.numFrames; // -- calc from other fields
+  framesPerSec = other.framesPerSec;
+  dMemcpy( colors, other.colors, sizeof( colors ) );
+  dMemcpy( sizes, other.sizes, sizeof( sizes ) );
+  dMemcpy( times, other.times, sizeof( times ) );
+  animTexUVs = other.animTexUVs; // -- calc from other fields
+  dMemcpy( texCoords, other.texCoords, sizeof( texCoords ) );
+  animTexTiling = other.animTexTiling;
+  animTexFramesString = other.animTexFramesString;
+  animTexFrames = other.animTexFrames; // -- parsed from animTexFramesString
+  textureName = other.textureName;
+  textureHandle = other.textureHandle;
+  spinBias = other.spinBias;
+  randomizeSpinDir = other.randomizeSpinDir;
+  textureExtName = other.textureExtName;
+  textureExtHandle = other.textureExtHandle;
+  constrain_pos = other.constrain_pos;
+  start_angle = other.start_angle;
+  angle_variance = other.angle_variance;
+  sizeBias = other.sizeBias;
+}
+
+ParticleData::~ParticleData()
+{
+   if (animTexUVs)
+   {
+      delete [] animTexUVs;
+   }
+
+  if (!isTempClone())
+    return;
+
+#ifdef TRACK_PARTICLE_DATA_CLONES
+  if (particle_data_clones > 0)
+  {
+    particle_data_clones--;
+    if (particle_data_clones == 0)
+      Con::errorf("ParticleData -- Clones eliminated!");
+  }
+  else
+    Con::errorf("ParticleData -- Too many clones deleted!");
+#endif
+}
+
+void ParticleData::onPerformSubstitutions() 
+{ 
+  char errorBuffer[256];
+  reload(errorBuffer);
 }

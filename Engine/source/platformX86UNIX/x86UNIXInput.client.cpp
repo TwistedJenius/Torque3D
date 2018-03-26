@@ -19,7 +19,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
-
+#ifndef TORQUE_SDL
 #include "platformX86UNIX/platformX86UNIX.h"
 #include "platform/platformInput.h"
 #include "platform/platformVideo.h"
@@ -335,7 +335,7 @@ void Input::log( const char* format, ... )
 ConsoleFunction( inputLog, void, 2, 2, "inputLog( string )" )
 {
    argc;
-   Input::log( "%s\n", argv[1] );
+   Input::log( "%s\n", (const char*)argv[1] );
 }
 #endif // LOG_INPUT
 
@@ -364,6 +364,9 @@ bool Platform::setClipboard(const char *text)
 XClipboard::XClipboard()
 {
    mInitialized = false;
+   mXData = 0;
+   mTData = 0;
+   mTDataSize = 0;
 }
 
 //------------------------------------------------------------------------------
@@ -551,7 +554,7 @@ bool XClipboard::setClipboard(const char *text)
    checkTDataSize(len);
 
    // copy the data into the storage buffer
-   dStrcpy(mTData, text);
+   dStrcpy(mTData, text, mTDataSize);
 
    // tell X that we own the clipboard.  (we'll get events
    // if an app tries to paste)
@@ -602,3 +605,4 @@ void XClipboard::handleSelectionRequest(XSelectionRequestEvent& request)
    // flush the output buffer to send the event now
    XFlush(display);
 }
+#endif

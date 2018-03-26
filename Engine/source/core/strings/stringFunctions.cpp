@@ -27,7 +27,7 @@
 #include "platform/platform.h"
 
 
-#if defined(TORQUE_OS_WIN32) || defined(TORQUE_OS_XBOX) || defined(TORQUE_OS_XENON)
+#if defined(TORQUE_OS_WIN)
 // This standard function is not defined when compiling with VC7...
 #define vsnprintf	_vsnprintf
 #endif
@@ -97,10 +97,10 @@ nat_toupper( nat_char a )
 
 
 
-static int
+static S32
 compare_right(const nat_char* a, const nat_char* b)
 {
-   int bias = 0;
+   S32 bias = 0;
 
    /* The longest run of digits wins.  That aside, the greatest
    value wins, but we can't know that it will until we've scanned
@@ -108,7 +108,7 @@ compare_right(const nat_char* a, const nat_char* b)
    remember it in BIAS. */
    for (;; a++, b++) {
       if (!nat_isdigit(*a)  &&  !nat_isdigit(*b))
-         return bias;
+         break;
       else if (!nat_isdigit(*a))
          return -1;
       else if (!nat_isdigit(*b))
@@ -123,7 +123,7 @@ compare_right(const nat_char* a, const nat_char* b)
          return bias;
    }
 
-   return 0;
+   return bias;
 }
 
 
@@ -134,7 +134,7 @@ compare_left(const nat_char* a, const nat_char* b)
    different value wins. */
    for (;; a++, b++) {
       if (!nat_isdigit(*a)  &&  !nat_isdigit(*b))
-         return 0;
+         break;
       else if (!nat_isdigit(*a))
          return -1;
       else if (!nat_isdigit(*b))
@@ -149,11 +149,11 @@ compare_left(const nat_char* a, const nat_char* b)
 }
 
 
-static int strnatcmp0(const nat_char* a, const nat_char* b, int fold_case)
+static S32 strnatcmp0(const nat_char* a, const nat_char* b, S32 fold_case)
 {
-   int ai, bi;
+   S32 ai, bi;
    nat_char ca, cb;
-   int fractional, result;
+   S32 fractional, result;
 
    ai = bi = 0;
    while (1) {
@@ -200,13 +200,13 @@ static int strnatcmp0(const nat_char* a, const nat_char* b, int fold_case)
 }
 
 
-int dStrnatcmp(const nat_char* a, const nat_char* b) {
+S32 dStrnatcmp(const nat_char* a, const nat_char* b) {
    return strnatcmp0(a, b, 0);
 }
 
 
 /* Compare, recognizing numeric string and ignoring case. */
-int dStrnatcasecmp(const nat_char* a, const nat_char* b) {
+S32 dStrnatcasecmp(const nat_char* a, const nat_char* b) {
    return strnatcmp0(a, b, 1);
 }
 
@@ -215,8 +215,9 @@ int dStrnatcasecmp(const nat_char* a, const nat_char* b) {
 
 char *dStrdup_r(const char *src, const char *fileName, dsize_t lineNumber)
 {
-   char *buffer = (char *) dMalloc_r(dStrlen(src) + 1, fileName, lineNumber);
-   dStrcpy(buffer, src);
+   dsize_t bufferLen = dStrlen(src) + 1;
+   char *buffer = (char *) dMalloc_r(bufferLen, fileName, lineNumber);
+   dStrcpy(buffer, src, bufferLen);
    return buffer;
 }
 
@@ -328,12 +329,12 @@ char* dStrcpyl(char *dst, dsize_t dstSize, ...)
 }
 
 
-int dStrcmp( const UTF16 *str1, const UTF16 *str2)
+S32 dStrcmp( const UTF16 *str1, const UTF16 *str2)
 {
-#if defined(TORQUE_OS_WIN32) || defined(TORQUE_OS_XBOX) || defined(TORQUE_OS_XENON)
+#if defined(TORQUE_OS_WIN)
    return wcscmp( reinterpret_cast<const wchar_t *>( str1 ), reinterpret_cast<const wchar_t *>( str2 ) );
 #else
-   int ret;
+   S32 ret;
    const UTF16 *a, *b;
    a = str1;
    b = str2;
@@ -347,7 +348,7 @@ int dStrcmp( const UTF16 *str1, const UTF16 *str2)
 
 char* dStrupr(char *str)
 {
-#if defined(TORQUE_OS_WIN32) || defined(TORQUE_OS_XBOX) || defined(TORQUE_OS_XENON)
+#if defined(TORQUE_OS_WIN)
    return _strupr(str);
 #else
    if (str == NULL)
@@ -365,7 +366,7 @@ char* dStrupr(char *str)
 
 char* dStrlwr(char *str)
 {
-#if defined(TORQUE_OS_WIN32) || defined(TORQUE_OS_XBOX) || defined(TORQUE_OS_XENON)
+#if defined(TORQUE_OS_WIN)
    return _strlwr(str);
 #else
    if (str == NULL)
@@ -382,6 +383,67 @@ char* dStrlwr(char *str)
 }
 
 //------------------------------------------------------------------------------
+
+S32 dStrlcat(char *dst, const char *src, dsize_t dstSize)
+{
+   //TODO: Do other platforms support strlcat in their libc
+#ifdef TORQUE_OS_MAC
+   S32 len = strlcat(dst, src, dstSize);
+
+   AssertWarn(len < dstSize, "Buffer too small in call to dStrlcat!");
+
+   return len;
+#else //TORQUE_OS_MAC
+   S32 dstLen = dStrlen(dst);
+   S32 srcLen = dStrlen(src);
+   S32 copyLen = srcLen;
+
+   //Check for buffer overflow and don't allow it. Warn on debug so we can fix it
+   AssertWarn(dstLen + copyLen < dstSize, "Buffer too small in call to dStrlcat!");
+   if (dstLen + copyLen + 1 > dstSize)
+   {
+      copyLen = dstSize - dstLen - 1;
+   }
+
+   //Copy src after dst and null terminate
+   memcpy(dst + dstLen, src, copyLen);
+   dst[dstLen + copyLen] = 0;
+
+   //Return the length of the string we would have generated
+   return dstLen + srcLen;
+#endif //TORQUE_OS_MAC
+}
+
+S32 dStrlcpy(char *dst, const char *src, dsize_t dstSize)
+{
+   //TODO: Do other platforms support strlcpy in their libc
+#ifdef TORQUE_OS_MAC
+   S32 len = strlcpy(dst, src, dstSize);
+
+   AssertWarn(len < dstSize, "Buffer too small in call to dStrlcpy!");
+
+   return len;
+#else //TORQUE_OS_MAC
+   S32 srcLen = dStrlen(src);
+   S32 copyLen = srcLen;
+
+   //Check for buffer overflow and don't allow it. Warn on debug so we can fix it
+   AssertWarn(copyLen < dstSize, "Buffer too small in call to dStrlcpy!");
+   if (srcLen + 1 > dstSize)
+   {
+      copyLen = dstSize - 1;
+   }
+
+   //Copy src and null terminate
+   memcpy(dst, src, copyLen);
+   dst[copyLen] = 0;
+
+   //Return the length of the string we would have generated
+   return srcLen;
+#endif //TORQUE_OS_MAC
+}
+
+//------------------------------------------------------------------------------
 // standard I/O functions
 
 void dPrintf(const char *format, ...)
@@ -389,11 +451,12 @@ void dPrintf(const char *format, ...)
    va_list args;
    va_start(args, format);
    vprintf(format, args);
+   va_end(args);
 }
 
-S32 dVprintf(const char *format, void *arglist)
+S32 dVprintf(const char *format, va_list arglist)
 {
-   return vprintf(format, (char*)arglist);
+   return (S32)vprintf(format, arglist);
 }
 
 S32 dSprintf(char *buffer, U32 bufferSize, const char *format, ...)
@@ -402,6 +465,7 @@ S32 dSprintf(char *buffer, U32 bufferSize, const char *format, ...)
    va_start(args, format);
 
    S32 len = vsnprintf(buffer, bufferSize, format, args);
+   va_end(args);
 
    AssertWarn( len < bufferSize, "Buffer too small in call to dSprintf!" );
 
@@ -409,9 +473,9 @@ S32 dSprintf(char *buffer, U32 bufferSize, const char *format, ...)
 }
 
 
-S32 dVsprintf(char *buffer, U32 bufferSize, const char *format, void *arglist)
+S32 dVsprintf(char *buffer, U32 bufferSize, const char *format, va_list arglist)
 {
-   S32 len = vsnprintf(buffer, bufferSize, format, (char*)arglist);
+   S32 len = vsnprintf(buffer, bufferSize, format, arglist);
    
    AssertWarn( len < bufferSize, "Buffer too small in call to dVsprintf!" );
 
@@ -421,7 +485,7 @@ S32 dVsprintf(char *buffer, U32 bufferSize, const char *format, void *arglist)
 
 S32 dSscanf(const char *buffer, const char *format, ...)
 {
-#if defined(TORQUE_OS_WIN32) || defined(TORQUE_OS_XBOX) || defined(TORQUE_OS_XENON)
+#if defined(TORQUE_OS_WIN)
    va_list args;
    va_start(args, format);
 
@@ -470,7 +534,9 @@ S32 dSscanf(const char *buffer, const char *format, ...)
 #else
    va_list args;
    va_start(args, format);
-   return vsscanf(buffer, format, args);
+   S32 res = vsscanf(buffer, format, args);
+   va_end(args);
+   return res;
 #endif
 }
 
@@ -531,4 +597,33 @@ char* dStristr( char* str1, const char* str2 )
 const char* dStristr( const char* str1, const char* str2 )
 {
    return dStristr( const_cast< char* >( str1 ), str2 );
+}
+
+int dStrrev(char* str)
+{
+   int l=dStrlen(str)-1; //get the string length
+   for(int x=0;x < l;x++,l--)
+   {
+      str[x]^=str[l];  //triple XOR Trick
+      str[l]^=str[x];  //for not using a temp
+      str[x]^=str[l];
+   }
+   return l;
+}
+
+int dItoa(int n, char s[])
+{
+   int i, sign;
+
+   if ((sign = n) < 0)  /* record sign */
+      n = -n;          /* make n positive */
+   i = 0;
+   do {       /* generate digits in reverse order */
+      s[i++] = n % 10 + '0';   /* get next digit */
+   } while ((n /= 10) > 0);     /* delete it */
+   if (sign < 0)
+      s[i++] = '-';
+   s[i] = '\0';
+   dStrrev(s);
+   return dStrlen(s);
 }

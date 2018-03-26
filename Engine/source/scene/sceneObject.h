@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #ifndef _SCENEOBJECT_H_
 #define _SCENEOBJECT_H_
 
@@ -51,6 +56,13 @@
 #include "scene/sceneContainer.h"
 #endif
 
+#ifndef _GFXDEVICE_H_
+#include "gfx/gfxDevice.h"
+#endif
+
+#ifndef _COLLADA_UTILS_H_
+#include "ts/collada/colladaUtils.h"
+#endif
 
 class SceneManager;
 class SceneRenderState;
@@ -367,6 +379,7 @@ class SceneObject : public NetObject, private SceneContainer::Link, public Proce
 
       SceneObject();
       virtual ~SceneObject();
+      bool mPathfindingIgnore;
 
       /// Triggered when a SceneObject onAdd is called.
       static Signal< void( SceneObject* ) > smSceneObjectAdd;
@@ -494,6 +507,9 @@ class SceneObject : public NetObject, private SceneContainer::Link, public Proce
       /// @param   scale   Scaling values
       virtual void setScale( const VectorF &scale );
 
+      /// Sets the forward vector of the object
+      void setForwardVector(VectorF newForward, VectorF upVector = VectorF(0, 0, 1));
+
       /// This sets the render transform for this object
       /// @param   mat   New render transform
       virtual void setRenderTransform(const MatrixF &mat);
@@ -536,6 +552,23 @@ class SceneObject : public NetObject, private SceneContainer::Link, public Proce
                                     AbstractPolyList* polyList, 
                                     const Box3F& box, 
                                     const SphereF& sphere ) { return false; }
+
+      /// Builds a list of polygons which intersect a bounding volume for exporting
+      ///
+      /// This will use either the sphere or the box, not both, the
+      /// SceneObject implementation ignores sphere.
+      ///
+      /// @see AbstractPolyList
+      /// @param   context    A contentual hint as to the type of polylist to build.
+      /// @param   polyList   Poly list build (out)
+      /// @param   box        Box bounding volume
+      /// @param   sphere     Sphere bounding volume
+      ///
+      virtual bool buildExportPolyList(ColladaUtils::ExportData *exportData,
+         const Box3F& box,
+         const SphereF& sphere) {
+         return false;
+      }
 
       /// Casts a ray and obtain collision information, returns true if RayInfo is modified.
       ///
@@ -765,8 +798,31 @@ class SceneObject : public NetObject, private SceneContainer::Link, public Proce
       static bool _setFieldRotation( void *object, const char *index, const char *data );
       static bool _setFieldScale( void *object, const char *index, const char *data );
       static bool _setMountPID( void* object, const char* index, const char* data );
+      static bool _setAccuEnabled( void *object, const char *index, const char *data );
 
       /// @}
+
+   // Accumulation Texture
+   // Note: This was placed in SceneObject to both ShapeBase and TSStatic could support it.
+   public:
+      GFXTextureObject* mAccuTex;
+      //   mSelectionFlags field keeps track of flags related to object selection.
+      //     PRE_SELECTED marks an object as pre-selected (object under cursor)
+      //     SELECTED marks an object as selected (a target)
+   protected:
+      U8 mSelectionFlags;
+   public:
+      enum { 
+         SELECTED      = BIT(0), 
+         PRE_SELECTED  = BIT(1), 
+      };
+      virtual void setSelectionFlags(U8 flags) { mSelectionFlags = flags; }
+      U8 getSelectionFlags() const { return mSelectionFlags; }
+      bool needsSelectionHighlighting() const { return (mSelectionFlags != 0); }
+      //   This should only return true if the object represents an independent camera
+      //   as opposed to something like a Player that has a built-in camera that requires
+      //   special calculations to determine the view transform.
+      virtual bool isCamera() const { return false; }
 };
 
 #endif  // _SCENEOBJECT_H_

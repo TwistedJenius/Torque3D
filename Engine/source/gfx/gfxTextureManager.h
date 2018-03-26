@@ -65,6 +65,15 @@ public:
    /// Set up some global script interface stuff.
    static void init();
 
+   /// Provide the path to the texture to use when the requested one is missing
+   static const String& getMissingTexturePath() { return smMissingTexturePath; }
+
+   /// Provide the path to the texture to use when the requested one is unavailable.
+   static const String& getUnavailableTexturePath() { return smUnavailableTexturePath; }
+
+   /// Provide the path to the texture used to warn the developer
+   static const String& getWarningTexturePath() { return smWarningTexturePath; }
+
    /// Update width and height based on available resources.
    ///
    /// We provide a simple interface for managing texture memory usage. Specifically,
@@ -107,7 +116,8 @@ public:
       U32 depth,
       void *pixels,
       GFXFormat format,
-      GFXTextureProfile *profile );
+      GFXTextureProfile *profile,
+      U32 numMipLevels = 1);
 
    virtual GFXTextureObject *createTexture(  U32 width,
       U32 height,
@@ -115,6 +125,19 @@ public:
       GFXTextureProfile *profile,
       U32 numMipLevels,
       S32 antialiasLevel);
+
+   Torque::Path validatePath(const Torque::Path &path);
+   GBitmap *loadUncompressedTexture(const Torque::Path &path, GFXTextureProfile *profile);
+   virtual GFXTextureObject *createCompositeTexture(const Torque::Path &pathR, const Torque::Path &pathG, const Torque::Path &pathB, const Torque::Path &pathA, U32 inputKey[4],
+      GFXTextureProfile *profile);
+
+   void saveCompositeTexture(const Torque::Path &pathR, const Torque::Path &pathG, const Torque::Path &pathB, const Torque::Path &pathA, U32 inputKey[4],
+      const Torque::Path &saveAs,GFXTextureProfile *profile);
+
+   virtual GFXTextureObject *createCompositeTexture(GBitmap*bmp[4], U32 inputKey[4],
+      const String &resourceName,
+      GFXTextureProfile *profile,
+      bool deleteBmp);
 
    void deleteTexture( GFXTextureObject *texture );
    void reloadTexture( GFXTextureObject *texture );
@@ -176,6 +199,16 @@ protected:
    /// @see GFXTextureProfile::PreserveSize
    /// 
    static S32 smTextureReductionLevel;
+
+   /// File path to the missing texture
+   static String smMissingTexturePath;
+
+   /// File path to the unavailable texture.  Often used by GUI controls
+   /// when the requested image is not available.
+   static String smUnavailableTexturePath;
+
+   /// File path to the warning texture
+   static String smWarningTexturePath;
 
    GFXTextureObject *mListHead;
    GFXTextureObject *mListTail;

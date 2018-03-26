@@ -20,6 +20,10 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
 #ifndef _SHAPEBASE_H_
 #define _SHAPEBASE_H_
 
@@ -63,6 +67,8 @@
    #include "console/dynamicTypes.h"
 #endif
 
+// Need full definition visible for SimObjectPtr<ParticleEmitter>
+#include "T3D/fx/particleEmitter.h"
 
 class GFXCubemap;
 class TSShapeInstance;
@@ -70,8 +76,6 @@ class SceneRenderState;
 class TSThread;
 class GameConnection;
 struct CameraScopeQuery;
-class ParticleEmitter;
-class ParticleEmitterData;
 class ProjectileData;
 class ExplosionData;
 struct DebrisData;
@@ -324,7 +328,10 @@ struct ShapeBaseImageData: public GameBaseData {
    /// @{
    bool              shakeCamera;
    VectorF           camShakeFreq;
-   VectorF           camShakeAmp;         
+   VectorF           camShakeAmp;
+   F32               camShakeDuration;
+   F32               camShakeRadius;
+   F32               camShakeFalloff;
    /// @}
 
    /// Maximum number of sounds this image can play at a time.
@@ -387,7 +394,7 @@ struct ShapeBaseImageData: public GameBaseData {
    S32         lightType;           ///< Indicates the type of the light.
                                     ///
                                     ///  One of: ConstantLight, PulsingLight, WeaponFireLight.
-   ColorF      lightColor;
+   LinearColorF      lightColor;
    S32         lightDuration;       ///< The duration in SimTime of Pulsing or WeaponFire type lights.
    F32         lightRadius;         ///< Extent of light.
    F32         lightBrightness;     ///< Brightness of the light ( if it is WeaponFireLight ).
@@ -488,8 +495,8 @@ struct ShapeBaseImageData: public GameBaseData {
 
    /// @name Callbacks
    /// @{
-   DECLARE_CALLBACK( void, onMount, ( ShapeBase* obj, S32 slot, F32 dt ) );
-   DECLARE_CALLBACK( void, onUnmount, ( ShapeBase* obj, S32 slot, F32 dt ) );
+   DECLARE_CALLBACK( void, onMount, ( SceneObject* obj, S32 slot, F32 dt ) );
+   DECLARE_CALLBACK( void, onUnmount, ( SceneObject* obj, S32 slot, F32 dt ) );
    /// @}
 };
 
@@ -578,6 +585,12 @@ public:
    F32 cameraMaxFov;                ///< Max vertical FOV allowed in degrees.
    /// @}
 
+   /// @name Camera Misc
+   /// @{
+   bool cameraCanBank;              ///< If the derrived class supports it, allow the camera to bank
+   bool mountedImagesBank;          ///< Do mounted images bank along with the camera?
+   /// @}
+
    /// @name Data initialized on preload
    /// @{
 
@@ -642,9 +655,20 @@ public:
    DECLARE_CALLBACK( void, onCollision, ( ShapeBase* obj, SceneObject* collObj, VectorF vec, F32 len ) );
    DECLARE_CALLBACK( void, onDamage, ( ShapeBase* obj, F32 delta ) );
    DECLARE_CALLBACK( void, onTrigger, ( ShapeBase* obj, S32 index, bool state ) );
-   DECLARE_CALLBACK( void, onEndSequence, ( ShapeBase* obj, S32 slot ) );
+   DECLARE_CALLBACK(void, onEndSequence, (ShapeBase* obj, S32 slot, const char* name));
    DECLARE_CALLBACK( void, onForceUncloak, ( ShapeBase* obj, const char* reason ) );
    /// @}
+   struct TextureTagRemapping
+   {
+      char* old_tag;
+      char* new_tag;
+   };
+   StringTableEntry remap_txr_tags;
+   char* remap_buffer;
+   Vector<TextureTagRemapping> txr_tag_remappings;
+   bool silent_bbox_check;
+public:
+   ShapeBaseData(const ShapeBaseData&, bool = false);
 };
 
 
@@ -683,7 +707,6 @@ public:
       MaxMountedImages = 4,            ///< Should be a power of 2
       MaxImageEmitters = 3,
       NumImageBits = 3,
-      ShieldNormalBits = 8,
       CollisionTimeoutValue = 250      ///< Timeout in ms.
    };
 
@@ -724,28 +747,14 @@ protected:
          Play, Stop, Pause, Destroy
       };
       TSThread* thread; ///< Pointer to 3space data.
-      U32 state;        ///< State of the thread
-                        ///
-                        ///  @see Thread::State
+      State state;      ///< State of the thread
       S32 sequence;     ///< The animation sequence which is running in this thread.
-	  F32 timescale;    ///< Timescale
-      U32 sound;        ///< Handle to sound.
+      F32 timescale;    ///< Timescale
       bool atEnd;       ///< Are we at the end of this thread?
       F32 position;
    };
    Thread mScriptThread[MaxScriptThreads];
 
-   /// @}
-
-   /// @name Invincibility
-   /// @{
-   F32 mInvincibleCount;
-   F32 mInvincibleTime;
-   F32 mInvincibleSpeed;
-   F32 mInvincibleDelta;
-   F32 mInvincibleEffect;
-   F32 mInvincibleFade;
-   bool mInvincibleOn;
    /// @}
 
    /// @name Motion
@@ -880,6 +889,7 @@ protected:
    /// @name Physical Properties
    /// @{
 
+   S32 mAiPose;                     ///< Current pose.
    F32 mEnergy;                     ///< Current enery level.
    F32 mRechargeRate;               ///< Energy recharge rate (in units/tick).
 
@@ -911,12 +921,6 @@ protected:
    F32 mWhiteOut;
 
    bool mFlipFadeVal;
-
-   /// Last shield direction (cur. unused)
-   Point3F mShieldNormal;
-
-   /// Camera shake caused by weapon fire.
-   CameraShake *mWeaponCamShake;
 
  public:
 
@@ -1113,11 +1117,11 @@ protected:
    virtual void onImageAnimThreadChange(U32 imageSlot, S32 imageShapeIndex, ShapeBaseImageData::StateData* lastState, const char* anim, F32 pos, F32 timeScale, bool reset=false);
    virtual void onImageAnimThreadUpdate(U32 imageSlot, S32 imageShapeIndex, F32 dt);
    virtual void ejectShellCasing( U32 imageSlot );
+   virtual void shakeCamera( U32 imageSlot );
    virtual void updateDamageLevel();
    virtual void updateDamageState();
-   virtual void blowUp();
-   virtual void onImpact(SceneObject* obj, VectorF vec);
-   virtual void onImpact(VectorF vec);
+   virtual void onImpact(SceneObject* obj, const VectorF& vec);
+   virtual void onImpact(const VectorF& vec);
    /// @}
 
    /// The inner prep render function that does the 
@@ -1151,11 +1155,9 @@ public:
       DamageMask      = Parent::NextFreeMask << 1,
       NoWarpMask      = Parent::NextFreeMask << 2,
       CloakMask       = Parent::NextFreeMask << 3,
-      ShieldMask      = Parent::NextFreeMask << 4,
-      InvincibleMask  = Parent::NextFreeMask << 5,
-      SkinMask        = Parent::NextFreeMask << 6,
-      MeshHiddenMask  = Parent::NextFreeMask << 7,
-      SoundMaskN      = Parent::NextFreeMask << 8,       ///< Extends + MaxSoundThreads bits
+      SkinMask        = Parent::NextFreeMask << 4,
+      MeshHiddenMask  = Parent::NextFreeMask << 5,
+      SoundMaskN      = Parent::NextFreeMask << 6,       ///< Extends + MaxSoundThreads bits
       ThreadMaskN     = SoundMaskN  << MaxSoundThreads,  ///< Extends + MaxScriptThreads bits
       ImageMaskN      = ThreadMaskN << MaxScriptThreads, ///< Extends + MaxMountedImage bits
       NextFreeMask    = ImageMaskN  << MaxMountedImages
@@ -1265,6 +1267,9 @@ public:
    ///
    /// @return Damage factor, between 0.0 - 1.0
    F32  getDamageValue();
+ 
+   /// Returns the datablock.maxDamage value  
+   F32 getMaxDamage(); 
 
    /// Returns the rate at which the object regenerates damage
    F32  getRepairRate() { return mRepairRate; }
@@ -1297,6 +1302,9 @@ public:
 
    /// Returns the recharge rate
    F32  getRechargeRate() { return mRechargeRate; }
+
+   /// Makes the shape explode.
+   virtual void blowUp();
 
    /// @}
 
@@ -1359,14 +1367,6 @@ public:
    /// @param   slot   Mount slot ID
    /// @param   timescale   Timescale
    bool setThreadTimeScale( U32 slot, F32 timeScale );
-
-   /// Start the sound associated with an animation thread
-   /// @param   thread   Thread
-   void startSequenceSound(Thread& thread);
-
-   /// Stop the sound associated with an animation thread
-   /// @param   thread   Thread
-   void stopThreadSound(Thread& thread);
 
    /// Advance all animation threads attached to this shapebase
    /// @param   dt   Change in time from last call to this function
@@ -1599,6 +1599,10 @@ public:
    /// @param   mat   Camera transform (out)
    virtual void getCameraTransform(F32* pos,MatrixF* mat);
 
+   /// Gets the view transform for a particular eye, taking into account the current absolute 
+   /// orient and position values of the display device.
+   virtual void getEyeCameraTransform( IDisplayDevice *display, U32 eyeId, MatrixF *outMat );
+
    /// Gets the index of a node inside a mounted image given the name
    /// @param   imageSlot   Image slot
    /// @param   nodeName    Node name
@@ -1615,7 +1619,7 @@ public:
 
    /// Returns the eye transform of this shape without including mounted images, IE the eyes of a player
    /// @param   mat   Eye transform (out)
-   virtual void getEyeBaseTransform(MatrixF* mat);
+   virtual void getEyeBaseTransform(MatrixF* mat, bool includeBank);
 
    /// The retraction transform is the muzzle transform in world space.
    ///
@@ -1668,7 +1672,7 @@ public:
    virtual void getRenderMuzzleVector(U32 imageSlot,VectorF* vec);
    virtual void getRenderMuzzlePoint(U32 imageSlot,Point3F* pos);
    virtual void getRenderEyeTransform(MatrixF* mat);
-   virtual void getRenderEyeBaseTransform(MatrixF* mat);
+   virtual void getRenderEyeBaseTransform(MatrixF* mat, bool includeBank);
    /// @}
 
 
@@ -1689,26 +1693,6 @@ public:
 
    /// Set the level of flash blindness
    virtual void setWhiteOut(const F32);
-   /// @}
-
-   /// @name Invincibility effect
-   /// This is the screen effect when invincible in the HUD
-   /// @see GameRenderFilters()
-   /// @{
-
-   /// Returns the level of invincibility effect
-   virtual F32 getInvincibleEffect() const;
-
-   /// Initializes invincibility effect and interpolation parameters
-   ///
-   /// @param   time   Time it takes to become invincible
-   /// @param   speed  Speed at which invincibility effects progress
-   virtual void setupInvincibleEffect(F32 time, F32 speed);
-
-   /// Advance invincibility effect animation
-   /// @param   dt   Time since last call of this function
-   virtual void updateInvincibleEffect(F32 dt);
-
    /// @}
 
    /// @name Movement & velocity
@@ -1876,7 +1860,58 @@ public:
 
 protected:
    DECLARE_CALLBACK( F32, validateCameraFov, (F32 fov) );
+public:
+   class CollisionEventCallback
+   {
+   public:
+      virtual void collisionNotify(SceneObject* shape0, SceneObject* shape1, const VectorF& vel)=0;
+   };
+private:
+   Vector<CollisionEventCallback*>  collision_callbacks;
+   void   notifyCollisionCallbacks(SceneObject*, const VectorF& vel);
+public:
+   void   registerCollisionCallback(CollisionEventCallback*);
+   void   unregisterCollisionCallback(CollisionEventCallback*);
 
+protected:
+   enum { 
+      ANIM_OVERRIDDEN     = BIT(0),
+      BLOCK_USER_CONTROL  = BIT(1),
+      IS_DEATH_ANIM       = BIT(2),
+      BAD_ANIM_ID         = 999999999,
+      BLENDED_CLIP        = 0x80000000,
+   };
+   struct BlendThread
+   {
+      TSThread* thread;
+      U32       tag;
+   };
+   Vector<BlendThread> blend_clips;
+   static U32 unique_anim_tag_counter;
+   U8 anim_clip_flags;
+   S32 last_anim_id;
+   U32 last_anim_tag;
+   U32 last_anim_lock_tag;
+   S32 saved_seq_id;
+   F32 saved_pos;
+   F32 saved_rate;
+   U32 playBlendAnimation(S32 seq_id, F32 pos, F32 rate);
+   void restoreBlendAnimation(U32 tag);
+public:
+   U32 playAnimation(const char* name, F32 pos, F32 rate, F32 trans, bool hold, bool wait, bool is_death_anim);
+   F32 getAnimationDuration(const char* name);
+
+   virtual void restoreAnimation(U32 tag);
+   virtual U32 getAnimationID(const char* name);
+   virtual U32 playAnimationByID(U32 anim_id, F32 pos, F32 rate, F32 trans, bool hold, bool wait, bool is_death_anim);
+   virtual F32 getAnimationDurationByID(U32 anim_id);
+   virtual bool isBlendAnimation(const char* name);
+   virtual const char* getLastClipName(U32 clip_tag);
+   virtual void unlockAnimation(U32 tag, bool force=false) { }
+   virtual U32 lockAnimation() { return 0; }
+   virtual bool isAnimationLocked() const { return false; }
+
+   virtual void setSelectionFlags(U8 flags);
 };
 
 

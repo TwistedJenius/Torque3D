@@ -34,7 +34,7 @@ public:
    virtual ~LightMapParams();
 
    /// The LightInfoEx hook type.
-   static const LightInfoExType Type;
+   static LightInfoExType Type;
 
    // LightInfoEx
    virtual void set( const LightInfoEx *ex );
@@ -47,7 +47,7 @@ public:
    // for console protected fields.
 
    bool representedInLightmap;   ///< This light is represented in lightmaps (static light, default: false)
-   ColorF shadowDarkenColor;     ///< The color that should be used to multiply-blend dynamic shadows onto lightmapped geometry (ignored if 'representedInLightmap' is false)
+   LinearColorF shadowDarkenColor;     ///< The color that should be used to multiply-blend dynamic shadows onto lightmapped geometry (ignored if 'representedInLightmap' is false)
    bool includeLightmappedGeometryInShadow; ///< This light should render lightmapped geometry during its shadow-map update (ignored if 'representedInLightmap' is false)
 };
 

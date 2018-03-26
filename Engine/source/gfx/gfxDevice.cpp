@@ -103,7 +103,7 @@ GFXDevice::GFXDevice()
    mViewMatrix.identity();
    mProjectionMatrix.identity();
    
-   for( int i = 0; i < WORLD_STACK_MAX; i++ )
+   for( S32 i = 0; i < WORLD_STACK_MAX; i++ )
       mWorldMatrix[i].identity();
    
    AssertFatal(smGFXDevice == NULL, "Already a GFXDevice created! Bad!");
@@ -145,10 +145,10 @@ GFXDevice::GFXDevice()
    }
 
    mGlobalAmbientColorDirty = false;
-   mGlobalAmbientColor = ColorF(0.0f, 0.0f, 0.0f, 1.0f);
+   mGlobalAmbientColor = LinearColorF(0.0f, 0.0f, 0.0f, 1.0f);
 
    mLightMaterialDirty = false;
-   dMemset(&mCurrentLightMaterial, NULL, sizeof(GFXLightMaterial));
+   dMemset(&mCurrentLightMaterial, 0, sizeof(GFXLightMaterial));
 
    // State block 
    mStateBlockDirty = false;
@@ -159,6 +159,9 @@ GFXDevice::GFXDevice()
 
    // misc
    mAllowRender = true;
+   mCurrentRenderStyle = RS_Standard;
+   mCurrentStereoTarget = -1;
+   mStereoHeadTransform = MatrixF(1);
    mCanCurrentlyRender = false;
    mInitialized = false;
    
@@ -177,23 +180,20 @@ GFXDevice::GFXDevice()
 
    // Initialize our drawing utility.
    mDrawer = NULL;
-
+   mFrameTime = PlatformTimer::create();
    // Add a few system wide shader macros.
    GFXShader::addGlobalMacro( "TORQUE", "1" );
    GFXShader::addGlobalMacro( "TORQUE_VERSION", String::ToString(getVersionNumber()) );
-   #if defined TORQUE_OS_WIN32
-      GFXShader::addGlobalMacro( "TORQUE_OS_WIN32" );
+   #if defined TORQUE_OS_WIN
+      GFXShader::addGlobalMacro( "TORQUE_OS_WIN" );
    #elif defined TORQUE_OS_MAC
       GFXShader::addGlobalMacro( "TORQUE_OS_MAC" );
    #elif defined TORQUE_OS_LINUX
       GFXShader::addGlobalMacro( "TORQUE_OS_LINUX" );      
-   #elif defined TORQUE_OS_XENON
-      GFXShader::addGlobalMacro( "TORQUE_OS_XENON" );
-   #elif defined TORQUE_OS_XBOX
-      GFXShader::addGlobalMacro( "TORQUE_OS_XBOX" );      
-   #elif defined TORQUE_OS_PS3
-      GFXShader::addGlobalMacro( "TORQUE_OS_PS3" );            
    #endif
+
+   mStereoTargets[0] = NULL;
+   mStereoTargets[1] = NULL;
 }
 
 GFXDrawUtil* GFXDevice::getDrawUtil()
@@ -213,11 +213,11 @@ void GFXDevice::deviceInited()
    // Initialize the static helper textures.
    GBitmap temp( 2, 2, false, GFXFormatR8G8B8A8 );
    temp.fill( ColorI::ONE );
-   GFXTexHandle::ONE.set( &temp, &GFXDefaultStaticDiffuseProfile, false, "GFXTexHandle::ONE" ); 
+   GFXTexHandle::ONE.set( &temp, &GFXStaticTextureSRGBProfile, false, "GFXTexHandle::ONE" ); 
    temp.fill( ColorI::ZERO );
-   GFXTexHandle::ZERO.set( &temp, &GFXDefaultStaticDiffuseProfile, false, "GFXTexHandle::ZERO" ); 
+   GFXTexHandle::ZERO.set( &temp, &GFXStaticTextureSRGBProfile, false, "GFXTexHandle::ZERO" ); 
    temp.fill( ColorI( 128, 128, 255 ) );
-   GFXTexHandle::ZUP.set( &temp, &GFXDefaultStaticNormalMapProfile, false, "GFXTexHandle::ZUP" ); 
+   GFXTexHandle::ZUP.set( &temp, &GFXNormalMapProfile, false, "GFXTexHandle::ZUP" );
 }
 
 bool GFXDevice::destroy()
@@ -264,6 +264,8 @@ GFXDevice::~GFXDevice()
       mNewCubemap[i] = NULL;
    }
 
+   mCurrentRT = NULL;
+
    // Release all the unreferenced textures in the cache.
    mTextureManager->cleanupCache();
 
@@ -274,6 +276,7 @@ GFXDevice::~GFXDevice()
 #endif
 
    SAFE_DELETE( mTextureManager );
+   SAFE_DELETE( mFrameTime );
 
    // Clear out our state block references
    mCurrentStateBlocks.clear();
@@ -448,7 +451,7 @@ void GFXDevice::updateStates(bool forceSetAll /*=false*/)
 
    if( mTextureMatrixCheckDirty )
    {
-      for( int i = 0; i < getNumSamplers(); i++ )
+      for( S32 i = 0; i < getNumSamplers(); i++ )
       {
          if( mTextureMatrixDirty[i] )
          {
@@ -505,6 +508,8 @@ void GFXDevice::updateStates(bool forceSetAll /*=false*/)
       mCurrentStateBlock = mNewStateBlock;
       mStateBlockDirty = false;
    }
+
+   _updateRenderTargets();
 
    if( mTexturesDirty )
    {
@@ -565,6 +570,13 @@ void GFXDevice::updateStates(bool forceSetAll /*=false*/)
 #ifdef TORQUE_DEBUG_RENDER
    doParanoidStateCheck();
 #endif
+}
+
+void GFXDevice::clearTextureStateImmediate(U32 stage)
+{
+   mCurrentTexture[stage] = NULL;
+   mCurrentCubemap[stage] = NULL;
+   setTextureInternal(stage, NULL);
 }
 
 void GFXDevice::setPrimitiveBuffer( GFXPrimitiveBuffer *buffer )
@@ -727,14 +739,14 @@ void GFXDevice::setLight(U32 stage, GFXLightInfo* light)
 //-----------------------------------------------------------------------------
 // Set Light Material
 //-----------------------------------------------------------------------------
-void GFXDevice::setLightMaterial(GFXLightMaterial mat)
+void GFXDevice::setLightMaterial(const GFXLightMaterial& mat)
 {
    mCurrentLightMaterial = mat;
    mLightMaterialDirty = true;
    mStateDirty = true;
 }
 
-void GFXDevice::setGlobalAmbientColor(ColorF color)
+void GFXDevice::setGlobalAmbientColor(const LinearColorF& color)
 {
    if(mGlobalAmbientColor != color)
    {
@@ -791,6 +803,8 @@ void GFXDevice::setCubeTexture( U32 stage, GFXCubemap *texture )
    mCurrentTexture[stage] = NULL;
 }
 
+//------------------------------------------------------------------------------
+
 inline bool GFXDevice::beginScene()
 {
    AssertFatal( mCanCurrentlyRender == false, "GFXDevice::beginScene() - The scene has already begun!" );
@@ -799,11 +813,9 @@ inline bool GFXDevice::beginScene()
 
    // Send the start of frame signal.
    getDeviceEventSignal().trigger( GFXDevice::deStartOfFrame );
-
+   mFrameTime->reset();
    return beginSceneInternal();
 }
-
-//------------------------------------------------------------------------------
 
 inline void GFXDevice::endScene()
 {
@@ -814,6 +826,22 @@ inline void GFXDevice::endScene()
 
    endSceneInternal();
    mDeviceStatistics.exportToConsole();
+}
+
+inline void GFXDevice::beginField()
+{
+   AssertFatal( mCanCurrentlyRender == true, "GFXDevice::beginField() - The scene has not yet begun!" );
+
+   // Send the start of field signal.
+   getDeviceEventSignal().trigger( GFXDevice::deStartOfField );
+}
+
+inline void GFXDevice::endField()
+{
+   AssertFatal( mCanCurrentlyRender == true, "GFXDevice::endField() - The scene has not yet begun!" );
+
+   // Send the end of field signal.
+   getDeviceEventSignal().trigger( GFXDevice::deEndOfField );
 }
 
 void GFXDevice::setViewport( const RectI &inRect ) 
@@ -846,7 +874,7 @@ void GFXDevice::popActiveRenderTarget()
    mRTStack.pop_back();
 }
 
-void GFXDevice::setActiveRenderTarget( GFXTarget *target )
+void GFXDevice::setActiveRenderTarget( GFXTarget *target, bool updateViewport )
 {
    AssertFatal( target, 
       "GFXDevice::setActiveRenderTarget - must specify a render target!" );
@@ -875,7 +903,10 @@ void GFXDevice::setActiveRenderTarget( GFXTarget *target )
    // We should consider removing this and making it the
    // responsibility of the caller to set a proper viewport
    // when the target is changed.   
-   setViewport( RectI( Point2I::Zero, mCurrentRT->getSize() ) );
+   if ( updateViewport )
+   {
+      setViewport( RectI( Point2I::Zero, mCurrentRT->getSize() ) );
+   }
 }
 
 /// Helper class for GFXDevice::describeResources.
@@ -1257,7 +1288,7 @@ DefineEngineFunction( getPixelShaderVersion, F32, (),,
    return GFX->getPixelShaderVersion();
 }   
 
-DefineEngineFunction( setPixelShaderVersion, void, ( float version ),,
+DefineEngineFunction( setPixelShaderVersion, void, ( F32 version ),,
    "@brief Sets the pixel shader version for the active device.\n"
    "This can be used to force a lower pixel shader version than is supported by "
    "the device for testing or performance optimization.\n"
@@ -1291,14 +1322,18 @@ DefineEngineFunction( getBestHDRFormat, GFXFormat, (),,
    // Figure out the best HDR format.  This is the smallest
    // format which supports blending and filtering.
    Vector<GFXFormat> formats;
-   formats.push_back( GFXFormatR10G10B10A2 );
-   formats.push_back( GFXFormatR16G16B16A16F );
-   formats.push_back( GFXFormatR16G16B16A16 );    
-   GFXFormat format = GFX->selectSupportedFormat(  &GFXDefaultRenderTargetProfile,
+   formats.push_back(GFXFormatR16G16B16A16F);
+   formats.push_back( GFXFormatR10G10B10A2 );   
+   GFXFormat format = GFX->selectSupportedFormat(  &GFXRenderTargetProfile,
                                                    formats, 
                                                    true,
                                                    true,
                                                    true );
 
    return format;
+}
+
+DefineConsoleFunction(ResetGFX, void, (), , "forces the gbuffer to be reinitialized in cases of improper/lack of buffer clears.")
+{
+   GFX->beginReset();
 }

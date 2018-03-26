@@ -58,15 +58,19 @@ U32 GFXTextureObject::dumpActiveTOs()
    return smActiveTOCount;
 }
 
+
+
+#endif // TORQUE_DEBUG
+
 DefineEngineFunction( dumpTextureObjects, void, (),,
    "Dumps a list of all active texture objects to the console.\n"
    "@note This function is only available in debug builds.\n"
    "@ingroup GFX\n" )
 {
+#ifdef TORQUE_DEBUG
    GFXTextureObject::dumpActiveTOs();
+#endif
 }
-
-#endif // TORQUE_DEBUG
 
 //-----------------------------------------------------------------------------
 // GFXTextureObject
@@ -208,7 +212,7 @@ F32 GFXTextureObject::getMaxVCoord() const
 U32 GFXTextureObject::getEstimatedSizeInBytes() const
 {
    // We have to deal with DDS specially.
-   if ( mFormat >= GFXFormatDXT1 )
+   if ( mFormat >= GFXFormatBC1 )
       return DDSFile::getSizeInBytes( mFormat, mTextureSize.x, mTextureSize.y, mMipLevels );
 
    // Else we need to calculate the size ourselves.

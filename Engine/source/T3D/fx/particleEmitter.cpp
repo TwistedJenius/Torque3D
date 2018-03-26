@@ -20,12 +20,18 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "T3D/fx/particleEmitter.h"
 
 #include "scene/sceneManager.h"
 #include "scene/sceneRenderState.h"
 #include "console/consoleTypes.h"
+#include "console/typeValidators.h"
 #include "core/stream/bitStream.h"
 #include "core/strings/stringUnit.h"
 #include "math/mRandom.h"
@@ -37,9 +43,9 @@
 #include "lighting/lightInfo.h"
 #include "console/engineAPI.h"
 
-#if defined(TORQUE_OS_XENON)
-#  include "gfx/D3D9/360/gfx360MemVertexBuffer.h"
-#endif
+#if defined(AFX_CAP_PARTICLE_POOLS) 
+#include "afx/util/afxParticlePool.h"
+#endif 
 
 Point3F ParticleEmitter::mWindVelocity( 0.0, 0.0, 0.0 );
 const F32 ParticleEmitter::AgedSpinToRadians = (1.0f/1000.0f) * (1.0f/360.0f) * M_PI_F * 2.0f;
@@ -99,9 +105,9 @@ ConsoleDocClass( ParticleEmitterData,
    "@see ParticleEmitterNode\n"
 );
 
-static const float sgDefaultEjectionOffset = 0.f;
-static const float sgDefaultPhiReferenceVel = 0.f;
-static const float sgDefaultPhiVariance = 360.f;
+static const F32 sgDefaultEjectionOffset = 0.f;
+static const F32 sgDefaultPhiReferenceVel = 0.f;
+static const F32 sgDefaultPhiVariance = 360.f;
 
 //-----------------------------------------------------------------------------
 // ParticleEmitterData
@@ -117,6 +123,7 @@ ParticleEmitterData::ParticleEmitterData()
    ejectionVelocity = 2.0f;   // From 1.0 - 3.0 meters per sec
    velocityVariance = 1.0f;
    ejectionOffset   = sgDefaultEjectionOffset;   // ejection from the emitter point
+   ejectionOffsetVariance = 0.0f;
 
    thetaMin         = 0.0f;   // All heights
    thetaMax         = 90.0f;
@@ -143,6 +150,7 @@ ParticleEmitterData::ParticleEmitterData()
    blendStyle = ParticleRenderInst::BlendUndefined;
    sortParticles = false;
    renderReflection = true;
+   glow = false;
    reverseOrder = false;
    textureName = 0;
    textureHandle = 0;
@@ -150,6 +158,21 @@ ParticleEmitterData::ParticleEmitterData()
    
    alignParticles = false;
    alignDirection = Point3F(0.0f, 1.0f, 0.0f);
+   
+   ejectionInvert = false;
+   fade_color    = false;
+   fade_alpha    = false;
+   fade_size     = false;
+   parts_per_eject = 1;
+   use_emitter_xfm = false;
+   
+#if defined(AFX_CAP_PARTICLE_POOLS) 
+   pool_datablock = 0;
+   pool_index = 0;
+   pool_depth_fade = false;
+   pool_radial_fade = false;
+   do_pool_id_convert = false;
+#endif
 }
 
 
@@ -170,6 +193,13 @@ ImplementEnumType( ParticleBlendStyle,
    { ParticleRenderInst::BlendPremultAlpha,   "PREMULTALPHA",  "Color blends with the colors of the imagemap rather than the alpha.\n" },
 EndImplementEnumType;
 
+IRangeValidator ejectPeriodIValidator(1, 2047);
+IRangeValidator periodVarianceIValidator(0, 2047);
+FRangeValidator ejectionFValidator(0.f, 655.35f);
+FRangeValidator velVarianceFValidator(0.f, 163.83f);
+FRangeValidator thetaFValidator(0.f, 180.f);
+FRangeValidator phiFValidator(0.f, 360.f);
+
 //-----------------------------------------------------------------------------
 // initPersistFields
 //-----------------------------------------------------------------------------
@@ -177,31 +207,34 @@ void ParticleEmitterData::initPersistFields()
 {
    addGroup( "ParticleEmitterData" );
 
-      addField("ejectionPeriodMS", TYPEID< S32 >(), Offset(ejectionPeriodMS,   ParticleEmitterData),
+      addFieldV("ejectionPeriodMS", TYPEID< S32 >(), Offset(ejectionPeriodMS,   ParticleEmitterData), &ejectPeriodIValidator,
          "Time (in milliseconds) between each particle ejection." );
 
-      addField("periodVarianceMS", TYPEID< S32 >(), Offset(periodVarianceMS,   ParticleEmitterData),
+      addFieldV("periodVarianceMS", TYPEID< S32 >(), Offset(periodVarianceMS,   ParticleEmitterData), &periodVarianceIValidator,
          "Variance in ejection period, from 1 - ejectionPeriodMS." );
 
-      addField( "ejectionVelocity", TYPEID< F32 >(), Offset(ejectionVelocity, ParticleEmitterData),
+      addFieldV( "ejectionVelocity", TYPEID< F32 >(), Offset(ejectionVelocity, ParticleEmitterData), &ejectionFValidator,
          "Particle ejection velocity." );
 
-      addField( "velocityVariance", TYPEID< F32 >(), Offset(velocityVariance, ParticleEmitterData),
+      addFieldV( "velocityVariance", TYPEID< F32 >(), Offset(velocityVariance, ParticleEmitterData), &velVarianceFValidator,
          "Variance for ejection velocity, from 0 - ejectionVelocity." );
 
-      addField( "ejectionOffset", TYPEID< F32 >(), Offset(ejectionOffset, ParticleEmitterData),
+      addFieldV( "ejectionOffset", TYPEID< F32 >(), Offset(ejectionOffset, ParticleEmitterData), &ejectionFValidator,
          "Distance along ejection Z axis from which to eject particles." );
+		 
+      addFieldV( "ejectionOffsetVariance", TYPEID< F32 >(), Offset(ejectionOffsetVariance, ParticleEmitterData), &ejectionFValidator,
+         "Distance Padding along ejection Z axis from which to eject particles." );
 
-      addField( "thetaMin", TYPEID< F32 >(), Offset(thetaMin, ParticleEmitterData),
+      addFieldV( "thetaMin", TYPEID< F32 >(), Offset(thetaMin, ParticleEmitterData), &thetaFValidator,
          "Minimum angle, from the horizontal plane, to eject from." );
 
-      addField( "thetaMax", TYPEID< F32 >(), Offset(thetaMax, ParticleEmitterData),
+      addFieldV( "thetaMax", TYPEID< F32 >(), Offset(thetaMax, ParticleEmitterData), &thetaFValidator,
          "Maximum angle, from the horizontal plane, to eject particles from." );
 
-      addField( "phiReferenceVel", TYPEID< F32 >(), Offset(phiReferenceVel, ParticleEmitterData),
+      addFieldV( "phiReferenceVel", TYPEID< F32 >(), Offset(phiReferenceVel, ParticleEmitterData), &phiFValidator,
          "Reference angle, from the vertical plane, to eject particles from." );
 
-      addField( "phiVariance", TYPEID< F32 >(), Offset(phiVariance, ParticleEmitterData),
+      addFieldV( "phiVariance", TYPEID< F32 >(), Offset(phiVariance, ParticleEmitterData), &phiFValidator,
          "Variance from the reference angle, from 0 - 360." );
 
       addField( "softnessDistance", TYPEID< F32 >(), Offset(softnessDistance, ParticleEmitterData),
@@ -277,10 +310,33 @@ void ParticleEmitterData::initPersistFields()
       addField( "renderReflection", TYPEID< bool >(), Offset(renderReflection, ParticleEmitterData),
          "Controls whether particles are rendered onto reflective surfaces like water." );
 
+      addField("glow", TYPEID< bool >(), Offset(glow, ParticleEmitterData),
+         "If true, the particles are rendered to the glow buffer as well.");
+
       //@}
 
    endGroup( "ParticleEmitterData" );
 
+   addGroup("AFX");
+   addField("ejectionInvert",       TypeBool,    Offset(ejectionInvert,     ParticleEmitterData));
+   addField("fadeColor",            TypeBool,    Offset(fade_color,         ParticleEmitterData));
+   addField("fadeAlpha",            TypeBool,    Offset(fade_alpha,         ParticleEmitterData));
+   addField("fadeSize",             TypeBool,    Offset(fade_size,          ParticleEmitterData));
+   // useEmitterTransform currently does not work in TGEA or T3D
+   addField("useEmitterTransform",  TypeBool,    Offset(use_emitter_xfm,    ParticleEmitterData));
+   endGroup("AFX");
+
+#if defined(AFX_CAP_PARTICLE_POOLS)
+   addGroup("AFX Pooled Particles");
+   addField("poolData", TYPEID<afxParticlePoolData>(), Offset(pool_datablock, ParticleEmitterData));
+   addField("poolIndex",            TypeS32,                      Offset(pool_index,        ParticleEmitterData));
+   addField("poolDepthFade",        TypeBool,                     Offset(pool_depth_fade,   ParticleEmitterData));
+   addField("poolRadialFade",       TypeBool,                     Offset(pool_radial_fade,  ParticleEmitterData));
+   endGroup("AFX Pooled Particles");
+#endif
+   // disallow some field substitutions
+   disableFieldSubstitutions("particles");
+   onlyKeepClearSubstitutions("poolData"); // subs resolving to "~~", or "~0" are OK
    Parent::initPersistFields();
 }
 
@@ -302,12 +358,14 @@ void ParticleEmitterData::packData(BitStream* stream)
 {
    Parent::packData(stream);
 
-   stream->writeInt(ejectionPeriodMS, 10);
-   stream->writeInt(periodVarianceMS, 10);
+   stream->writeInt(ejectionPeriodMS, 11);      // must match limit on valid range in ParticleEmitterData::initPersistFields
+   stream->writeInt(periodVarianceMS, 11);
    stream->writeInt((S32)(ejectionVelocity * 100), 16);
    stream->writeInt((S32)(velocityVariance * 100), 14);
    if( stream->writeFlag( ejectionOffset != sgDefaultEjectionOffset ) )
       stream->writeInt((S32)(ejectionOffset * 100), 16);
+   if( stream->writeFlag( ejectionOffsetVariance != 0.0f ) )
+      stream->writeInt((S32)(ejectionOffsetVariance * 100), 16);
    stream->writeRangedU32((U32)thetaMin, 0, 180);
    stream->writeRangedU32((U32)thetaMax, 0, 180);
    if( stream->writeFlag( phiReferenceVel != sgDefaultPhiReferenceVel ) )
@@ -342,7 +400,24 @@ void ParticleEmitterData::packData(BitStream* stream)
    }
    stream->writeFlag(highResOnly);
    stream->writeFlag(renderReflection);
+   stream->writeFlag(glow);
    stream->writeInt( blendStyle, 4 );
+
+   stream->writeFlag(ejectionInvert);
+   stream->writeFlag(fade_color);
+   stream->writeFlag(fade_alpha);
+   stream->writeFlag(fade_size);
+   stream->writeFlag(use_emitter_xfm);
+
+#if defined(AFX_CAP_PARTICLE_POOLS) 
+   if (stream->writeFlag(pool_datablock))
+   {
+     stream->writeRangedU32(packed ? SimObjectId((uintptr_t)pool_datablock) : pool_datablock->getId(), DataBlockObjectIdFirst, DataBlockObjectIdLast);
+     stream->write(pool_index);
+     stream->writeFlag(pool_depth_fade);
+     stream->writeFlag(pool_radial_fade);
+   }
+#endif 
 }
 
 //-----------------------------------------------------------------------------
@@ -352,15 +427,18 @@ void ParticleEmitterData::unpackData(BitStream* stream)
 {
    Parent::unpackData(stream);
 
-   ejectionPeriodMS = stream->readInt(10);
-   periodVarianceMS = stream->readInt(10);
+   ejectionPeriodMS = stream->readInt(11);
+   periodVarianceMS = stream->readInt(11);
    ejectionVelocity = stream->readInt(16) / 100.0f;
    velocityVariance = stream->readInt(14) / 100.0f;
    if( stream->readFlag() )
       ejectionOffset = stream->readInt(16) / 100.0f;
    else
       ejectionOffset = sgDefaultEjectionOffset;
-
+   if( stream->readFlag() )
+      ejectionOffsetVariance = stream->readInt(16) / 100.0f;
+   else
+      ejectionOffsetVariance = 0.0f;
    thetaMin = (F32)stream->readRangedU32(0, 180);
    thetaMax = (F32)stream->readRangedU32(0, 180);
    if( stream->readFlag() )
@@ -401,7 +479,24 @@ void ParticleEmitterData::unpackData(BitStream* stream)
    }
    highResOnly = stream->readFlag();
    renderReflection = stream->readFlag();
+   glow = stream->readFlag();
    blendStyle = stream->readInt( 4 );
+   ejectionInvert = stream->readFlag();
+   fade_color = stream->readFlag();
+   fade_alpha = stream->readFlag();
+   fade_size = stream->readFlag();
+   use_emitter_xfm = stream->readFlag();
+   
+#if defined(AFX_CAP_PARTICLE_POOLS) 
+   if (stream->readFlag())
+   {
+      pool_datablock = (afxParticlePoolData*)stream->readRangedU32(DataBlockObjectIdFirst, DataBlockObjectIdLast);
+      stream->read(&pool_index);
+      pool_depth_fade = stream->readFlag();
+      pool_radial_fade = stream->readFlag();
+      do_pool_id_convert = true;
+   }
+#endif 
 }
 
 //-----------------------------------------------------------------------------
@@ -513,8 +608,9 @@ bool ParticleEmitterData::onAdd()
 
       // First we parse particleString into a list of particle name tokens 
       Vector<char*> dataBlocks(__FILE__, __LINE__);
-      char* tokCopy = new char[dStrlen(particleString) + 1];
-      dStrcpy(tokCopy, particleString);
+      dsize_t tokLen = dStrlen(particleString) + 1;
+      char* tokCopy = new char[tokLen];
+      dStrcpy(tokCopy, particleString, tokLen);
 
       char* currTok = dStrtok(tokCopy, " \t");
       while (currTok != NULL) 
@@ -581,10 +677,26 @@ bool ParticleEmitterData::preload(bool server, String &errorStr)
 
    if (!server)
    {
+#if defined(AFX_CAP_PARTICLE_POOLS)
+      if (do_pool_id_convert)
+      {
+        SimObjectId db_id = (SimObjectId)(uintptr_t)pool_datablock;
+        if (db_id != 0)
+        {
+          // try to convert id to pointer
+          if (!Sim::findObject(db_id, pool_datablock))
+          {
+            Con::errorf("ParticleEmitterData::reload() -- bad datablockId: 0x%x (poolData)", db_id);
+          }
+        }
+        do_pool_id_convert = false;
+      }
+#endif
+
      // load emitter texture if specified
      if (textureName && textureName[0])
      {
-       textureHandle = GFXTexHandle(textureName, &GFXDefaultStaticDiffuseProfile, avar("%s() - textureHandle (line %d)", __FUNCTION__, __LINE__));
+       textureHandle = GFXTexHandle(textureName, &GFXStaticTextureSRGBProfile, avar("%s() - textureHandle (line %d)", __FUNCTION__, __LINE__));
        if (!textureHandle)
        {
          errorStr = String::ToString("Missing particle emitter texture: %s", textureName);
@@ -650,6 +762,8 @@ void ParticleEmitterData::allocPrimBuffer( S32 overrideSize )
 
    partListInitSize = maxPartLife / (ejectionPeriodMS - periodVarianceMS);
    partListInitSize += 8; // add 8 as "fudge factor" to make sure it doesn't realloc if it goes over by 1
+   if (parts_per_eject > 1)
+     partListInitSize *= parts_per_eject;
 
    // if override size is specified, then the emitter overran its buffer and needs a larger allocation
    if( overrideSize != -1 )
@@ -678,11 +792,6 @@ void ParticleEmitterData::allocPrimBuffer( S32 overrideSize )
    U16 *ibIndices;
    GFXBufferType bufferType = GFXBufferTypeStatic;
 
-#ifdef TORQUE_OS_XENON
-   // Because of the way the volatile buffers work on Xenon this is the only
-   // way to do this.
-   bufferType = GFXBufferTypeVolatile;
-#endif
    primBuff.set( GFX, indexListSize, 0, bufferType );
    primBuff.lock( &ibIndices );
    dMemcpy( ibIndices, indices, indexListSize * sizeof(U16) );
@@ -691,6 +800,134 @@ void ParticleEmitterData::allocPrimBuffer( S32 overrideSize )
    delete [] indices;
 }
 
+//#define TRACK_PARTICLE_EMITTER_DATA_CLONES
+
+#ifdef TRACK_PARTICLE_EMITTER_DATA_CLONES
+static int emitter_data_clones = 0;
+#endif
+
+ParticleEmitterData::ParticleEmitterData(const ParticleEmitterData& other, bool temp_clone) : GameBaseData(other, temp_clone)
+{
+#ifdef TRACK_PARTICLE_EMITTER_DATA_CLONES
+   emitter_data_clones++;
+   if (emitter_data_clones == 1)
+     Con::errorf("ParticleEmitterData -- Clones are on the loose!");
+#endif
+
+   ejectionPeriodMS = other.ejectionPeriodMS;
+   periodVarianceMS = other.periodVarianceMS;
+   ejectionVelocity = other.ejectionVelocity;
+   velocityVariance = other.velocityVariance;
+   ejectionOffset = other.ejectionOffset;
+   ejectionOffsetVariance = other.ejectionOffsetVariance;
+   thetaMin = other.thetaMin;
+   thetaMax = other.thetaMax;
+   phiReferenceVel = other.phiReferenceVel;
+   phiVariance = other.phiVariance;
+   softnessDistance = other.softnessDistance;
+   ambientFactor = other.ambientFactor;
+   lifetimeMS = other.lifetimeMS;
+   lifetimeVarianceMS = other.lifetimeVarianceMS;
+   overrideAdvance = other.overrideAdvance;
+   orientParticles = other.orientParticles;
+   orientOnVelocity = other.orientOnVelocity;
+   useEmitterSizes = other.useEmitterSizes;
+   useEmitterColors = other.useEmitterColors;
+   alignParticles = other.alignParticles;
+   alignDirection = other.alignDirection;
+   particleString = other.particleString;
+   particleDataBlocks = other.particleDataBlocks; // -- derived from particleString
+   dataBlockIds = other.dataBlockIds; // -- derived from particleString
+   partListInitSize = other.partListInitSize; // -- approx calc from other fields
+   primBuff = other.primBuff;
+   blendStyle = other.blendStyle;
+   sortParticles = other.sortParticles;
+   reverseOrder = other.reverseOrder;
+   textureName = other.textureName;
+   textureHandle = other.textureHandle; // -- TextureHandle loads using textureName
+   highResOnly = other.highResOnly;
+   renderReflection = other.renderReflection;
+   fade_color = other.fade_color;
+   fade_size = other.fade_size;
+   fade_alpha = other.fade_alpha;
+   ejectionInvert = other.ejectionInvert;
+   parts_per_eject = other.parts_per_eject; // -- set to 1 (used by subclasses)
+   use_emitter_xfm = other.use_emitter_xfm;
+#if defined(AFX_CAP_PARTICLE_POOLS)
+   pool_datablock = other.pool_datablock;
+   pool_index = other.pool_index;
+   pool_depth_fade = other.pool_depth_fade;
+   pool_radial_fade = other.pool_radial_fade;
+   do_pool_id_convert = other.do_pool_id_convert; // -- flags pool id conversion need
+#endif
+}
+
+ParticleEmitterData::~ParticleEmitterData()
+{
+  if (!isTempClone())
+    return;
+
+  for (S32 i = 0; i < particleDataBlocks.size(); i++)
+  {
+    if (particleDataBlocks[i] && particleDataBlocks[i]->isTempClone())
+    {
+      delete particleDataBlocks[i];
+      particleDataBlocks[i] = 0;
+    }
+  }
+
+#ifdef TRACK_PARTICLE_EMITTER_DATA_CLONES
+  if (emitter_data_clones > 0)
+  {
+    emitter_data_clones--;
+    if (emitter_data_clones == 0)
+      Con::errorf("ParticleEmitterData -- Clones eliminated!");
+  }
+  else
+    Con::errorf("ParticleEmitterData -- Too many clones deleted!");
+#endif
+}
+
+ParticleEmitterData* ParticleEmitterData::cloneAndPerformSubstitutions(const SimObject* owner, S32 index)
+{
+  if (!owner)
+    return this;
+
+  bool clone_parts_db = false;
+
+  // note -- this could be checked when the particle blocks are evaluated
+  for (S32 i = 0; i < this->particleDataBlocks.size(); i++)
+  {
+    if (this->particleDataBlocks[i] && (this->particleDataBlocks[i]->getSubstitutionCount() > 0))
+    {
+      clone_parts_db = true;
+      break;
+    }
+  }
+
+  ParticleEmitterData* sub_emitter_db = this;
+
+  if (this->getSubstitutionCount() > 0 || clone_parts_db)
+  {
+    sub_emitter_db = new ParticleEmitterData(*this, true);
+    performSubstitutions(sub_emitter_db, owner, index);
+
+    if (clone_parts_db)
+    {
+      for (S32 i = 0; i < sub_emitter_db->particleDataBlocks.size(); i++)
+      {
+        if (sub_emitter_db->particleDataBlocks[i] && (sub_emitter_db->particleDataBlocks[i]->getSubstitutionCount() > 0))
+        {
+          ParticleData* orig_db = sub_emitter_db->particleDataBlocks[i];
+          sub_emitter_db->particleDataBlocks[i] = new ParticleData(*orig_db, true);
+          orig_db->performSubstitutions(sub_emitter_db->particleDataBlocks[i], owner, index);
+        }
+      }
+    }
+  }
+
+  return sub_emitter_db;
+}
 
 //-----------------------------------------------------------------------------
 // ParticleEmitter
@@ -718,9 +955,20 @@ ParticleEmitter::ParticleEmitter()
    mCurBuffSize = 0;
 
    mDead = false;
+   mDataBlock = NULL;
 
    // ParticleEmitter should be allocated on the client only.
    mNetFlags.set( IsGhost );
+   fade_amt = 1.0f;
+   forced_bbox = false;
+   db_temp_clone = false;
+   pos_pe.set(0,0,0);
+   sort_priority = 0;
+   mDataBlock = 0;
+   
+#if defined(AFX_CAP_PARTICLE_POOLS)
+   pool = 0;
+#endif 
 }
 
 //-----------------------------------------------------------------------------
@@ -731,6 +979,19 @@ ParticleEmitter::~ParticleEmitter()
    for( S32 i = 0; i < part_store.size(); i++ )
    {
       delete [] part_store[i];
+   }
+   if (db_temp_clone && mDataBlock && mDataBlock->isTempClone())
+   {
+     for (S32 i = 0; i < mDataBlock->particleDataBlocks.size(); i++)
+     {
+       if (mDataBlock->particleDataBlocks[i] && mDataBlock->particleDataBlocks[i]->isTempClone())
+       {
+         delete mDataBlock->particleDataBlocks[i];
+         mDataBlock->particleDataBlocks[i] = 0;
+       }
+     }
+     delete mDataBlock;
+     mDataBlock = 0;
    }
 }
 
@@ -748,11 +1009,6 @@ bool ParticleEmitter::onAdd()
    {
       cleanup->addObject( this );
    }
-   else
-   {
-      AssertFatal( false, "Error, could not find ClientMissionCleanup group" );
-      return false;
-   }
 
    removeFromProcessList();
 
@@ -760,6 +1016,11 @@ bool ParticleEmitter::onAdd()
    mObjBox.minExtents = Point3F(-radius, -radius, -radius);
    mObjBox.maxExtents = Point3F(radius, radius, radius);
    resetWorldBox();
+
+#if defined(AFX_CAP_PARTICLE_POOLS) 
+   if (pool)
+     pool->addParticleEmitter(this);
+#endif
 
    return true;
 }
@@ -770,6 +1031,14 @@ bool ParticleEmitter::onAdd()
 //-----------------------------------------------------------------------------
 void ParticleEmitter::onRemove()
 {
+#if defined(AFX_CAP_PARTICLE_POOLS) 
+  if (pool)
+  {
+    pool->removeParticleEmitter(this);
+    pool = 0;
+  }
+#endif
+
    removeFromScene();
    Parent::onRemove();
 }
@@ -815,6 +1084,11 @@ bool ParticleEmitter::onNewDataBlock( GameBaseData *dptr, bool reload )
       part_list_head.next = NULL;
       n_parts = 0;
    }
+   if (mDataBlock->isTempClone())
+   {
+     db_temp_clone = true;
+     return true;
+   }
 
    scriptOnNewDataBlock();
    return true;
@@ -823,10 +1097,10 @@ bool ParticleEmitter::onNewDataBlock( GameBaseData *dptr, bool reload )
 //-----------------------------------------------------------------------------
 // getCollectiveColor
 //-----------------------------------------------------------------------------
-ColorF ParticleEmitter::getCollectiveColor()
+LinearColorF ParticleEmitter::getCollectiveColor()
 {
 	U32 count = 0;
-	ColorF color = ColorF(0.0f, 0.0f, 0.0f);
+	LinearColorF color = LinearColorF(0.0f, 0.0f, 0.0f);
 
    count = n_parts;
    for( Particle* part = part_list_head.next; part != NULL; part = part->next )
@@ -851,6 +1125,11 @@ ColorF ParticleEmitter::getCollectiveColor()
 //-----------------------------------------------------------------------------
 void ParticleEmitter::prepRenderImage(SceneRenderState* state)
 {
+#if defined(AFX_CAP_PARTICLE_POOLS)
+   if (pool)
+     return;
+#endif 
+
    if( state->isReflectPass() && !getDataBlock()->renderReflection )
       return;
 
@@ -879,6 +1158,7 @@ void ParticleEmitter::prepRenderImage(SceneRenderState* state)
    ri->translucentSort = true;
    ri->type = RenderPassManager::RIT_Particle;
    ri->sortDistSq = getRenderWorldBox().getSqDistanceToPoint( camPos );
+   ri->defaultKey = (-sort_priority*100);
 
    // Draw the system offscreen unless the highResOnly flag is set on the datablock
    ri->systemState = ( getDataBlock()->highResOnly ? PSS_AwaitingHighResDraw : PSS_AwaitingOffscreenDraw );
@@ -896,6 +1176,8 @@ void ParticleEmitter::prepRenderImage(SceneRenderState* state)
 
    ri->blendStyle = mDataBlock->blendStyle;
 
+   ri->glow = mDataBlock->glow;
+
    // use first particle's texture unless there is an emitter texture to override it
    if (mDataBlock->textureHandle)
      ri->diffuseTex = &*(mDataBlock->textureHandle);
@@ -905,7 +1187,7 @@ void ParticleEmitter::prepRenderImage(SceneRenderState* state)
    ri->softnessDistance = mDataBlock->softnessDistance; 
 
    // Sort by texture too.
-   ri->defaultKey = ri->diffuseTex ? (U32)ri->diffuseTex : (U32)ri->vertBuff;
+   ri->defaultKey = ri->diffuseTex ? (uintptr_t)ri->diffuseTex : (uintptr_t)ri->vertBuff;
 
    renderManager->addInst( ri );
 
@@ -916,7 +1198,7 @@ void ParticleEmitter::prepRenderImage(SceneRenderState* state)
 //-----------------------------------------------------------------------------
 void ParticleEmitter::setSizes( F32 *sizeList )
 {
-   for( int i=0; i<ParticleData::PDC_NUM_KEYS; i++ )
+   for( S32 i=0; i<ParticleData::PDC_NUM_KEYS; i++ )
    {
       sizes[i] = sizeList[i];
    }
@@ -925,9 +1207,9 @@ void ParticleEmitter::setSizes( F32 *sizeList )
 //-----------------------------------------------------------------------------
 // setColors
 //-----------------------------------------------------------------------------
-void ParticleEmitter::setColors( ColorF *colorList )
+void ParticleEmitter::setColors( LinearColorF *colorList )
 {
-   for( int i=0; i<ParticleData::PDC_NUM_KEYS; i++ )
+   for( S32 i=0; i<ParticleData::PDC_NUM_KEYS; i++ )
    {
       colors[i] = colorList[i];
    }
@@ -980,6 +1262,7 @@ void ParticleEmitter::emitParticles(const Point3F& point,
       return;
    }
 
+   pos_pe = point;
    Point3F realStart;
    if( useLastPosition && mHasLastPosition )
       realStart = mLastPosition;
@@ -1047,7 +1330,8 @@ void ParticleEmitter::emitParticles(const Point3F& start,
          // Create particle at the correct position
          Point3F pos;
          pos.interpolate(start, end, F32(currTime) / F32(numMilliseconds));
-         addParticle(pos, axis, velocity, axisx);
+         addParticle(pos, axis, velocity, axisx, numMilliseconds-currTime);
+
          particlesAdded = true;
          mNextParticleTime = 0;
       }
@@ -1077,7 +1361,7 @@ void ParticleEmitter::emitParticles(const Point3F& start,
       // Create particle at the correct position
       Point3F pos;
       pos.interpolate(start, end, F32(currTime) / F32(numMilliseconds));
-      addParticle(pos, axis, velocity, axisx);
+      addParticle(pos, axis, velocity, axisx, numMilliseconds-currTime);
       particlesAdded = true;
 
       //   This override-advance code is restored in order to correctly adjust
@@ -1102,17 +1386,27 @@ void ParticleEmitter::emitParticles(const Point3F& start,
          {
             if (advanceMS != 0)
             {
-              F32 t = F32(advanceMS) / 1000.0;
+               F32 t = F32(advanceMS) / 1000.0;
 
-              Point3F a = last_part->acc;
-              a -= last_part->vel * last_part->dataBlock->dragCoefficient;
-              a -= mWindVelocity * last_part->dataBlock->windCoefficient;
-              a += Point3F(0.0f, 0.0f, -9.81f) * last_part->dataBlock->gravityCoefficient;
+               Point3F a = last_part->acc;
+               a -= last_part->vel * last_part->dataBlock->dragCoefficient;
+               a -= mWindVelocity * last_part->dataBlock->windCoefficient;
+               //a += Point3F(0.0f, 0.0f, -9.81f) * last_part->dataBlock->gravityCoefficient;
+               a.z += -9.81f*last_part->dataBlock->gravityCoefficient; // as long as gravity is a constant, this is faster
 
-              last_part->vel += a * t;
-              last_part->pos += last_part->vel * t;
+               last_part->vel += a * t;
+               //last_part->pos += last_part->vel * t;
+               last_part->pos_local += last_part->vel * t;
 
-              updateKeyData( last_part );
+               // AFX -- allow subclasses to adjust the particle params here
+               sub_particleUpdate(last_part);
+
+               if (last_part->dataBlock->constrain_pos)
+                  last_part->pos = last_part->pos_local + this->pos_pe;
+               else
+                  last_part->pos = last_part->pos_local;
+
+               updateKeyData( last_part );
             }
          }
       }
@@ -1184,7 +1478,7 @@ void ParticleEmitter::emitParticles(const Point3F& rCenter,
       axis.normalize();
       pos += rCenter;
 
-      addParticle(pos, axis, velocity, axisz);
+      addParticle(pos, axis, velocity, axisz, 0);
    }
 
    // Set world bounding box
@@ -1207,6 +1501,8 @@ void ParticleEmitter::emitParticles(const Point3F& rCenter,
 //-----------------------------------------------------------------------------
 void ParticleEmitter::updateBBox()
 {
+   if (forced_bbox)
+     return;
    Point3F minPt(1e10,   1e10,  1e10);
    Point3F maxPt(-1e10, -1e10, -1e10);
 
@@ -1227,15 +1523,18 @@ void ParticleEmitter::updateBBox()
    boxScale.y = getMax(boxScale.y, 1.0f);
    boxScale.z = getMax(boxScale.z, 1.0f);
    mBBObjToWorld.scale(boxScale);
+
+#if defined(AFX_CAP_PARTICLE_POOLS)
+   if (pool)
+     pool->updatePoolBBox(this);
+#endif
 }
 
 //-----------------------------------------------------------------------------
 // addParticle
 //-----------------------------------------------------------------------------
-void ParticleEmitter::addParticle(const Point3F& pos,
-                                  const Point3F& axis,
-                                  const Point3F& vel,
-                                  const Point3F& axisx)
+void ParticleEmitter::addParticle(const Point3F& pos, const Point3F& axis, const Point3F& vel,
+                                  const Point3F& axisx, const U32 age_offset)
 {
    n_parts++;
    if (n_parts > n_part_capacity || n_parts > mDataBlock->partListInitSize)
@@ -1257,6 +1556,16 @@ void ParticleEmitter::addParticle(const Point3F& pos,
    pNew->next = part_list_head.next;
    part_list_head.next = pNew;
 
+   // for earlier access to constrain_pos, the ParticleData datablock is chosen here instead
+   // of later in the method.
+   U32 dBlockIndex = gRandGen.randI() % mDataBlock->particleDataBlocks.size();
+   ParticleData* part_db = mDataBlock->particleDataBlocks[dBlockIndex];
+   // set start position to world or local space
+   Point3F pos_start; 
+   if (part_db->constrain_pos)
+     pos_start.set(0,0,0);
+   else
+     pos_start = pos;
    Point3F ejectionAxis = axis;
    F32 theta = (mDataBlock->thetaMax - mDataBlock->thetaMin) * gRandGen.randF() +
                mDataBlock->thetaMin;
@@ -1278,14 +1587,17 @@ void ParticleEmitter::addParticle(const Point3F& pos,
    F32 initialVel = mDataBlock->ejectionVelocity;
    initialVel    += (mDataBlock->velocityVariance * 2.0f * gRandGen.randF()) - mDataBlock->velocityVariance;
 
-   pNew->pos = pos + (ejectionAxis * mDataBlock->ejectionOffset);
-   pNew->vel = ejectionAxis * initialVel;
-   pNew->orientDir = ejectionAxis;
+   pNew->pos = pos_start + (ejectionAxis * (mDataBlock->ejectionOffset + mDataBlock->ejectionOffsetVariance* gRandGen.randF()) );
+   pNew->pos_local = pNew->pos;
+   pNew->vel = mDataBlock->ejectionInvert ? ejectionAxis * -initialVel : ejectionAxis * initialVel;
+   if (mDataBlock->orientParticles)
+     pNew->orientDir = ejectionAxis;
+   else
+     // note -- for non-oriented particles, we use orientDir.x to store the billboard start angle.
+     pNew->orientDir.x = mDegToRad(part_db->start_angle + part_db->angle_variance*2.0f*gRandGen.randF() - part_db->angle_variance);
    pNew->acc.set(0, 0, 0);
-   pNew->currentAge = 0;
-
-   // Choose a new particle datablack randomly from the list
-   U32 dBlockIndex = gRandGen.randI() % mDataBlock->particleDataBlocks.size();
+   pNew->currentAge = age_offset;
+   pNew->t_last = 0.0f;
    mDataBlock->particleDataBlocks[dBlockIndex]->initializeParticle(pNew, vel);
    updateKeyData( pNew );
 
@@ -1367,8 +1679,10 @@ void ParticleEmitter::updateKeyData( Particle *part )
 	if( part->totalLifetime < 1 )
 		part->totalLifetime = 1;
 
-   F32 t = F32(part->currentAge) / F32(part->totalLifetime);
-   AssertFatal(t <= 1.0f, "Out out bounds filter function for particle.");
+   if (part->currentAge > part->totalLifetime)
+      part->currentAge = part->totalLifetime;
+   F32 t = (F32)part->currentAge / (F32)part->totalLifetime;
+  
 
    for( U32 i = 1; i < ParticleData::PDC_NUM_KEYS; i++ )
    {
@@ -1400,7 +1714,25 @@ void ParticleEmitter::updateKeyData( Particle *part )
          {
             part->size = (part->dataBlock->sizes[i-1] * (1.0 - firstPart)) +
                          (part->dataBlock->sizes[i]   * firstPart);
+            part->size *= part->dataBlock->sizeBias;
          }
+		 
+         if (mDataBlock->fade_color) 
+         {
+           if (mDataBlock->fade_alpha) 
+             part->color *= fade_amt; 
+           else 
+           {
+             part->color.red *= fade_amt; 
+             part->color.green *= fade_amt; 
+             part->color.blue *= fade_amt; 
+           }
+         }
+         else if (mDataBlock->fade_alpha) 
+           part->color.alpha *= fade_amt;
+
+         if (mDataBlock->fade_size)
+           part->size *= fade_amt;
          break;
 
       }
@@ -1412,19 +1744,25 @@ void ParticleEmitter::updateKeyData( Particle *part )
 //-----------------------------------------------------------------------------
 void ParticleEmitter::update( U32 ms )
 {
-   // TODO: Prefetch
+   F32 t = F32(ms)/1000.0f; // AFX -- moved outside loop, no need to recalculate this for every particle
 
    for (Particle* part = part_list_head.next; part != NULL; part = part->next)
    {
-      F32 t = F32(ms) / 1000.0;
-
       Point3F a = part->acc;
-      a -= part->vel        * part->dataBlock->dragCoefficient;
+      a -= part->vel * part->dataBlock->dragCoefficient;
       a -= mWindVelocity * part->dataBlock->windCoefficient;
-      a += Point3F(0.0f, 0.0f, -9.81f) * part->dataBlock->gravityCoefficient;
+      a.z += -9.81f*part->dataBlock->gravityCoefficient; // AFX -- as long as gravity is a constant, this is faster
 
       part->vel += a * t;
-      part->pos += part->vel * t;
+      part->pos_local += part->vel * t; 
+
+      // AFX -- allow subclasses to adjust the particle params here
+      sub_particleUpdate(part);
+
+      if (part->dataBlock->constrain_pos)
+        part->pos = part->pos_local + this->pos_pe;
+      else
+        part->pos = part->pos_local;
 
       updateKeyData( part );
    }
@@ -1442,7 +1780,7 @@ struct SortParticle
 };
 
 // qsort callback function for particle sorting
-int QSORT_CALLBACK cmpSortParticles(const void* p1, const void* p2)
+S32 QSORT_CALLBACK cmpSortParticles(const void* p1, const void* p2)
 {
    const SortParticle* sp1 = (const SortParticle*)p1;
    const SortParticle* sp2 = (const SortParticle*)p2;
@@ -1455,7 +1793,7 @@ int QSORT_CALLBACK cmpSortParticles(const void* p1, const void* p2)
       return -1;
 }
 
-void ParticleEmitter::copyToVB( const Point3F &camPos, const ColorF &ambientColor )
+void ParticleEmitter::copyToVB( const Point3F &camPos, const LinearColorF &ambientColor )
 {
    static Vector<SortParticle> orderedVector(__FILE__, __LINE__);
 
@@ -1483,22 +1821,9 @@ void ParticleEmitter::copyToVB( const Point3F &camPos, const ColorF &ambientColo
    }
    PROFILE_END();
 
-#if defined(TORQUE_OS_XENON)
-   // Allocate writecombined since we don't read back from this buffer (yay!)
-   if(mVertBuff.isNull())
-      mVertBuff = new GFX360MemVertexBuffer(GFX, 1, getGFXVertexFormat<ParticleVertexType>(), sizeof(ParticleVertexType), GFXBufferTypeDynamic, PAGE_WRITECOMBINE);
-   if( n_parts > mCurBuffSize )
-   {
-      mCurBuffSize = n_parts;
-      mVertBuff.resize(n_parts * 4);
-   }
-
-   ParticleVertexType *buffPtr = mVertBuff.lock();
-#else
    static Vector<ParticleVertexType> tempBuff(2048);
    tempBuff.reserve( n_parts*4 + 64); // make sure tempBuff is big enough
    ParticleVertexType *buffPtr = tempBuff.address(); // use direct pointer (faster)
-#endif
    
    if (mDataBlock->orientParticles)
    {
@@ -1632,9 +1957,6 @@ void ParticleEmitter::copyToVB( const Point3F &camPos, const ColorF &ambientColo
       PROFILE_END();
    }
 
-#if defined(TORQUE_OS_XENON)
-   mVertBuff.unlock();
-#else
    PROFILE_START(ParticleEmitter_copyToVB_LockCopy);
    // create new VB if emitter size grows
    if( !mVertBuff || n_parts > mCurBuffSize )
@@ -1647,7 +1969,6 @@ void ParticleEmitter::copyToVB( const Point3F &camPos, const ColorF &ambientColo
    dMemcpy( verts, tempBuff.address(), n_parts * 4 * sizeof(ParticleVertexType) );
    mVertBuff.unlock();
    PROFILE_END();
-#endif
 
    PROFILE_END();
 }
@@ -1658,7 +1979,7 @@ void ParticleEmitter::copyToVB( const Point3F &camPos, const ColorF &ambientColo
 void ParticleEmitter::setupBillboard( Particle *part,
                                       Point3F *basePts,
                                       const MatrixF &camView,
-                                      const ColorF &ambientColor,
+                                      const LinearColorF &ambientColor,
                                       ParticleVertexType *lVerts )
 {
    F32 width     = part->size * 0.5f;
@@ -1668,7 +1989,7 @@ void ParticleEmitter::setupBillboard( Particle *part,
    mSinCos(spinAngle, sy, cy);
 
    const F32 ambientLerp = mClampF( mDataBlock->ambientFactor, 0.0f, 1.0f );
-   ColorF partCol = mLerp( part->color, ( part->color * ambientColor ), ambientLerp );
+   LinearColorF partCol = mLerp( part->color, ( part->color * ambientColor ), ambientLerp );
 
    // fill four verts, use macro and unroll loop
    #define fillVert(){ \
@@ -1678,10 +1999,10 @@ void ParticleEmitter::setupBillboard( Particle *part,
       camView.mulV( lVerts->point );                        \
       lVerts->point *= width;                               \
       lVerts->point += part->pos;                           \
-      lVerts->color = partCol; } \
+      lVerts->color = partCol.toColorI(); } \
 
    // Here we deal with UVs for animated particle (billboard)
-   if (part->dataBlock->animateTexture)
+   if (part->dataBlock->animateTexture && !part->dataBlock->animTexFrames.empty())
    { 
      S32 fm = (S32)(part->currentAge*(1.0/1000.0)*part->dataBlock->framesPerSec);
      U8 fm_tile = part->dataBlock->animTexFrames[fm % part->dataBlock->numFrames];
@@ -1742,7 +2063,7 @@ void ParticleEmitter::setupBillboard( Particle *part,
 //-----------------------------------------------------------------------------
 void ParticleEmitter::setupOriented( Particle *part,
                                      const Point3F &camPos,
-                                     const ColorF &ambientColor,
+                                     const LinearColorF &ambientColor,
                                      ParticleVertexType *lVerts )
 {
    Point3F dir;
@@ -1771,8 +2092,8 @@ void ParticleEmitter::setupOriented( Particle *part,
    Point3F end = part->pos + dir;
 
    const F32 ambientLerp = mClampF( mDataBlock->ambientFactor, 0.0f, 1.0f );
-   ColorF partCol = mLerp( part->color, ( part->color * ambientColor ), ambientLerp );
-
+   LinearColorF partCol = mLerp( part->color, ( part->color * ambientColor ), ambientLerp );
+   const ColorI color = partCol.toColorI();
    // Here we deal with UVs for animated particle (oriented)
    if (part->dataBlock->animateTexture)
    { 
@@ -1784,55 +2105,55 @@ void ParticleEmitter::setupOriented( Particle *part,
       uv[1] = uv[0] + (part->dataBlock->animTexTiling.x + 1);
       uv[2] = uv[1] + 1;
       uv[3] = uv[0] + 1;
+      
+      lVerts->point = start + crossDir;
+      lVerts->color = color;
+      // Here and below, we copy UVs from particle datablock's current frame's UVs (oriented)
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[0]];
+      ++lVerts;
 
-     lVerts->point = start + crossDir;
-     lVerts->color = partCol;
-     // Here and below, we copy UVs from particle datablock's current frame's UVs (oriented)
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[0]];
-     ++lVerts;
+      lVerts->point = start - crossDir;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[1]];
+      ++lVerts;
 
-     lVerts->point = start - crossDir;
-     lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[1]];
-     ++lVerts;
+      lVerts->point = end - crossDir;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[2]];
+      ++lVerts;
 
-     lVerts->point = end - crossDir;
-     lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[2]];
-     ++lVerts;
+      lVerts->point = end + crossDir;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[3]];
+      ++lVerts;
 
-     lVerts->point = end + crossDir;
-     lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[3]];
-     ++lVerts;
-
-     return;
+      return;
    }
 
    lVerts->point = start + crossDir;
-   lVerts->color = partCol;
+   lVerts->color = color;
    // Here and below, we copy UVs from particle datablock's texCoords (oriented)
-   lVerts->texCoord = part->dataBlock->texCoords[0];
-   ++lVerts;
-
-   lVerts->point = start - crossDir;
-   lVerts->color = partCol;
    lVerts->texCoord = part->dataBlock->texCoords[1];
    ++lVerts;
 
-   lVerts->point = end - crossDir;
-   lVerts->color = partCol;
+   lVerts->point = start - crossDir;
+   lVerts->color = color;
    lVerts->texCoord = part->dataBlock->texCoords[2];
    ++lVerts;
 
-   lVerts->point = end + crossDir;
-   lVerts->color = partCol;
+   lVerts->point = end - crossDir;
+   lVerts->color = color;
    lVerts->texCoord = part->dataBlock->texCoords[3];
+   ++lVerts;
+
+   lVerts->point = end + crossDir;
+   lVerts->color = color;
+   lVerts->texCoord = part->dataBlock->texCoords[0];
    ++lVerts;
 }
 
 void ParticleEmitter::setupAligned( const Particle *part, 
-                                    const ColorF &ambientColor,
+                                    const LinearColorF &ambientColor,
                                     ParticleVertexType *lVerts )
 {
    // The aligned direction will always be normalized.
@@ -1882,8 +2203,8 @@ void ParticleEmitter::setupAligned( const Particle *part,
    Point3F end = part->pos + right;
 
    const F32 ambientLerp = mClampF( mDataBlock->ambientFactor, 0.0f, 1.0f );
-   ColorF partCol = mLerp( part->color, ( part->color * ambientColor ), ambientLerp );
-
+   LinearColorF partCol = mLerp( part->color, ( part->color * ambientColor ), ambientLerp );
+   const ColorI color = partCol.toColorI();
    // Here we deal with UVs for animated particle
    if (part->dataBlock->animateTexture)
    { 
@@ -1896,46 +2217,46 @@ void ParticleEmitter::setupAligned( const Particle *part,
       uv[2] = uv[1] + 1;
       uv[3] = uv[0] + 1;
 
-     lVerts->point = start + cross;
-      lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[0]];
-     ++lVerts;
+      lVerts->point = start + cross;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[0]];
+      ++lVerts;
 
-     lVerts->point = start - cross;
-      lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[1]];
-     ++lVerts;
+      lVerts->point = start - cross;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[1]];
+      ++lVerts;
 
-     lVerts->point = end - cross;
-      lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[2]];
-     ++lVerts;
+      lVerts->point = end - cross;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[2]];
+      ++lVerts;
 
-     lVerts->point = end + cross;
-      lVerts->color = partCol;
-     lVerts->texCoord = part->dataBlock->animTexUVs[uv[3]];
-     ++lVerts;
+      lVerts->point = end + cross;
+      lVerts->color = color;
+      lVerts->texCoord = part->dataBlock->animTexUVs[uv[3]];
+      ++lVerts;
    }
    else
    {
       // Here and below, we copy UVs from particle datablock's texCoords
       lVerts->point = start + cross;
-      lVerts->color = partCol;
+      lVerts->color = color;
       lVerts->texCoord = part->dataBlock->texCoords[0];
       ++lVerts;
 
       lVerts->point = start - cross;
-      lVerts->color = partCol;
+      lVerts->color = color;
       lVerts->texCoord = part->dataBlock->texCoords[1];
       ++lVerts;
 
       lVerts->point = end - cross;
-      lVerts->color = partCol;
+      lVerts->color = color;
       lVerts->texCoord = part->dataBlock->texCoords[2];
       ++lVerts;
 
       lVerts->point = end + cross;
-      lVerts->color = partCol;
+      lVerts->color = color;
       lVerts->texCoord = part->dataBlock->texCoords[3];
       ++lVerts;
    }
@@ -2004,3 +2325,43 @@ DefineEngineMethod(ParticleEmitterData, reload, void,(),,
 {
    object->reload();
 }
+void ParticleEmitter::emitParticlesExt(const MatrixF& xfm, const Point3F& point, 
+                                       const Point3F& velocity, const U32 numMilliseconds)
+{
+   if (mDataBlock->use_emitter_xfm)
+   {
+      Point3F zero_point(0.0f, 0.0f, 0.0f);
+      this->pos_pe = zero_point;
+      this->setTransform(xfm);
+      Point3F axis(0.0,0.0,1.0);    
+      xfm.mulV(axis);
+      emitParticles(zero_point, true, axis, velocity, numMilliseconds);
+   }
+   else
+   {
+      this->pos_pe = point;
+      Point3F axis(0.0,0.0,1.0);    
+      xfm.mulV(axis);
+      emitParticles(point, true, axis, velocity, numMilliseconds);
+   }
+}  
+
+void ParticleEmitter::setForcedObjBox(Box3F& box) 
+{
+  mObjBox = box;
+  forced_bbox = true;
+#if defined(AFX_CAP_PARTICLE_POOLS)
+  if (pool)
+    pool->updatePoolBBox(this);
+#endif
+}
+
+void ParticleEmitter::setSortPriority(S8 priority) 
+{
+  sort_priority = (priority == 0) ? 1 : priority;
+#if defined(AFX_CAP_PARTICLE_POOLS)
+  if (pool)
+    pool->setSortPriority(sort_priority);
+#endif
+}
+

@@ -88,8 +88,8 @@ void GuiEaseViewCtrl::onRender(Point2I offset, const RectI &updateRect)
    
    // Draw axis.
 
-	GFX->getDrawUtil()->drawLine( zeroX,  zeroY + 0.0f,  zeroX,          zeroY + plotH,  mAxisColor );
-	GFX->getDrawUtil()->drawLine( zeroX,  zeroY + plotH, zeroX + plotW,  zeroY + plotH,  mAxisColor );
+	GFX->getDrawUtil()->drawLine( zeroX,  zeroY + 0.0f,  zeroX,          zeroY + plotH,  mAxisColor.toColorI());
+	GFX->getDrawUtil()->drawLine( zeroX,  zeroY + plotH, zeroX + plotW,  zeroY + plotH,  mAxisColor.toColorI());
    
 	F32 numPoints = W;
 	F32 lastX = zeroX;
@@ -97,7 +97,7 @@ void GuiEaseViewCtrl::onRender(Point2I offset, const RectI &updateRect)
 
    // Draw curve.
 
-	for( int i = 1; i <= numPoints; ++ i )
+	for( S32 i = 1; i <= numPoints; ++ i )
 	{
 		F32 x = ( F32 ) i / ( F32 ) numPoints;
       F32 y = mEase.getValue( x, 0, 1, 1 );
@@ -105,7 +105,7 @@ void GuiEaseViewCtrl::onRender(Point2I offset, const RectI &updateRect)
 		x = zeroX + x * plotW;
       y = zeroY + plotH - y * plotH;
       
-		GFX->getDrawUtil()->drawLine( lastX, lastY, x, y, mEaseColor );
+		GFX->getDrawUtil()->drawLine( lastX, lastY, x, y, mEaseColor.toColorI());
 
 		lastX = x;
 		lastY = y;

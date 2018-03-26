@@ -28,6 +28,7 @@
 #include "console/consoleTypes.h"
 #include "core/tAlgorithm.h"
 #include "math/mMathFn.h"
+#include "math/mathUtils.h"
 #include "T3D/gameBase/gameConnection.h"
 #include "ts/tsShapeInstance.h"
 #include "gui/3d/guiTSControl.h"
@@ -58,15 +59,16 @@ MODULE_END;
 
 GFX_ImplementTextureProfile( ReflectRenderTargetProfile, 
                              GFXTextureProfile::DiffuseMap, 
-                             GFXTextureProfile::PreserveSize | GFXTextureProfile::NoMipmap | GFXTextureProfile::RenderTarget | GFXTextureProfile::Pooled, 
-                             GFXTextureProfile::None );
+                             GFXTextureProfile::PreserveSize | GFXTextureProfile::RenderTarget | GFXTextureProfile::SRGB | GFXTextureProfile::Pooled,
+                             GFXTextureProfile::NONE );
 
 GFX_ImplementTextureProfile( RefractTextureProfile,
                              GFXTextureProfile::DiffuseMap,
                              GFXTextureProfile::PreserveSize | 
                              GFXTextureProfile::RenderTarget |
+                             GFXTextureProfile::SRGB | 
                              GFXTextureProfile::Pooled,
-                             GFXTextureProfile::None );
+                             GFXTextureProfile::NONE );
 
 static S32 QSORT_CALLBACK compareReflectors( const void *a, const void *b )
 {
@@ -82,8 +84,9 @@ U32 ReflectionManager::smFrameReflectionMS = 10;
 F32 ReflectionManager::smRefractTexScale = 0.5f;
 
 ReflectionManager::ReflectionManager() 
- : mUpdateRefract( true ),
-   mReflectFormat( GFXFormatR8G8B8A8 )
+ : mReflectFormat( GFXFormatR8G8B8A8_SRGB ),
+   mUpdateRefract( true ),
+   mLastUpdateMs( 0 )
 {
    mTimer = PlatformTimer::create();
 
@@ -93,9 +96,9 @@ ReflectionManager::ReflectionManager()
 void ReflectionManager::initConsole()
 {
    Con::addVariable( "$pref::Reflect::refractTexScale", TypeF32, &ReflectionManager::smRefractTexScale, "RefractTex has dimensions equal to the active render target scaled in both x and y by this float.\n"
-	   "@ingroup Rendering");
+      "@ingroup Rendering");
    Con::addVariable( "$pref::Reflect::frameLimitMS", TypeS32, &ReflectionManager::smFrameReflectionMS, "ReflectionManager tries not to spend more than this amount of time updating reflections per frame.\n"
-	   "@ingroup Rendering");
+      "@ingroup Rendering");
 }
 
 ReflectionManager::~ReflectionManager()
@@ -133,12 +136,45 @@ void ReflectionManager::update(  F32 timeSlice,
    // Setup a culler for testing the 
    // visibility of reflectors.
    Frustum culler;
-   culler.set( false,
-               query.fov,
-               (F32)resolution.x / (F32)resolution.y,
-               query.nearPlane, 
-               query.farPlane,
-               query.cameraMatrix );
+
+   // jamesu - normally we just need a frustum which covers the current ports, however for SBS mode 
+   // we need something which covers both viewports.
+   S32 stereoTarget = GFX->getCurrentStereoTarget();
+   if (stereoTarget != -1)
+   {
+      // In this case we're rendering in stereo using a specific eye
+      MathUtils::makeFovPortFrustum(&culler, false, query.nearPlane, query.farPlane, query.fovPort[stereoTarget], query.headMatrix);
+   }
+   else if (GFX->getCurrentRenderStyle() == GFXDevice::RS_StereoSideBySide)
+   {
+      // Calculate an ideal culling size here, we'll just assume double fov based on the first fovport based on 
+      // the head position.
+      FovPort port = query.fovPort[0];
+      F32 upSize = query.nearPlane * port.upTan;
+      F32 downSize = query.nearPlane * port.downTan;
+
+      F32 top = upSize;
+      F32 bottom = -downSize;
+
+      F32 fovInRadians = mAtan2((top - bottom) / 2.0f, query.nearPlane) * 3.0f;
+
+      culler.set(false,
+         fovInRadians,
+         (F32)(query.stereoViewports[0].extent.x + query.stereoViewports[1].extent.x) / (F32)query.stereoViewports[0].extent.y,
+         query.nearPlane,
+         query.farPlane,
+         query.headMatrix);
+   }
+   else
+   {
+      // Normal culling
+      culler.set(false,
+         query.fov,
+         (F32)resolution.x / (F32)resolution.y,
+         query.nearPlane,
+         query.farPlane,
+         query.cameraMatrix);
+   }
 
    // Manipulate the frustum for tiled screenshots
    const bool screenShotMode = gScreenShot && gScreenShot->isPending();
@@ -158,6 +194,7 @@ void ReflectionManager::update(  F32 timeSlice,
    refparams.viewportExtent = resolution;
    refparams.culler = culler;
    refparams.startOfUpdateMs = startOfUpdateMs;
+   refparams.eyeId = stereoTarget;
 
    // Update the reflection score.
    ReflectorList::iterator reflectorIter = mReflectors.begin();
@@ -181,7 +218,12 @@ void ReflectionManager::update(  F32 timeSlice,
          break;
 
       (*reflectorIter)->updateReflection( refparams );
-      (*reflectorIter)->lastUpdateMs = startOfUpdateMs;
+
+     if (stereoTarget != 0) // only update MS if we're not rendering the left eye in separate mode
+     {
+        (*reflectorIter)->lastUpdateMs = startOfUpdateMs;
+     }
+
       numUpdated++;
 
       // If we run out of update time then stop.
@@ -189,11 +231,8 @@ void ReflectionManager::update(  F32 timeSlice,
          break;
    }
 
-   U32 totalElapsed = mTimer->getElapsedMs();
-
    // Set metric/debug related script variables...
 
-   U32 numEnabled = mReflectors.size();   
    U32 numVisible = 0;
    U32 numOccluded = 0;
 
@@ -208,6 +247,8 @@ void ReflectionManager::update(  F32 timeSlice,
    }
 
 #ifdef TORQUE_GATHER_METRICS
+   U32 numEnabled = mReflectors.size();   
+   U32 totalElapsed = mTimer->getElapsedMs();
    const GFXTextureProfileStats &stats = ReflectRenderTargetProfile.getStats();
    
    F32 mb = ( stats.activeBytes / 1024.0f ) / 1024.0f;
@@ -236,21 +277,16 @@ GFXTexHandle ReflectionManager::allocRenderTarget( const Point2I &size )
                         avar("%s() - mReflectTex (line %d)", __FUNCTION__, __LINE__) );
 }
 
-GFXTextureObject* ReflectionManager::getRefractTex()
+GFXTextureObject* ReflectionManager::getRefractTex( bool forceUpdate )
 {
    GFXTarget *target = GFX->getActiveRenderTarget();
    GFXFormat targetFormat = target->getFormat();
    const Point2I &targetSize = target->getSize();
 
-#if defined(TORQUE_OS_XENON)
-   // On the Xbox360, it needs to do a resolveTo from the active target, so this
-   // may as well be the full size of the active target
-   const U32 desWidth = targetSize.x;
-   const U32 desHeight = targetSize.y;
-#else
-   const U32 desWidth = mFloor( (F32)targetSize.x * smRefractTexScale );
-   const U32 desHeight = mFloor( ( F32)targetSize.y * smRefractTexScale );
-#endif
+   // D3D11 needs to be the same size as the active target
+   U32 desWidth = targetSize.x;
+   U32 desHeight = targetSize.y;
+
 
    if ( mRefractTex.isNull() || 
         mRefractTex->getWidth() != desWidth ||
@@ -261,7 +297,7 @@ GFXTextureObject* ReflectionManager::getRefractTex()
       mUpdateRefract = true;
    }
 
-   if ( mUpdateRefract )
+   if ( forceUpdate || mUpdateRefract )
    {
       target->resolveTo( mRefractTex );   
       mUpdateRefract = false;
@@ -290,6 +326,7 @@ bool ReflectionManager::_handleDeviceEvent( GFXDevice::GFXDeviceEventType evt )
    switch( evt )
    {
    case GFXDevice::deStartOfFrame:
+   case GFXDevice::deStartOfField:
 
       mUpdateRefract = true;
       break;

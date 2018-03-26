@@ -60,19 +60,23 @@ protected:
    enum
    {
       DynamicLight = 0,
+      SunLight,
       StaticLightNonLMGeometry,
       StaticLightLMGeometry,
-      NUM_LIT_STATES
+      NUM_LIT_STATES,
+      Base = 0,
+      Reflecting = 1
    };
-   GFXStateBlockRef mLitState[NUM_LIT_STATES];
+   GFXStateBlockRef mLitState[NUM_LIT_STATES][2];
 
 public:
    LightMatInstance(Material &mat) : Parent(mat), mLightMapParamsSC(NULL), mInternalPass(false) {}
 
    virtual bool init( const FeatureSet &features, const GFXVertexFormat *vertexFormat );
    virtual bool setupPass( SceneRenderState *state, const SceneData &sgData );
-};
 
+   bool mSpecialLight;
+};
 
 class AdvancedLightBinManager : public RenderTexTargetBinManager
 {
@@ -107,19 +111,22 @@ public:
 
    // RenderBinManager
    virtual void render(SceneRenderState *);
-   virtual void clear();
+   virtual void clear() {}
    virtual void sort() {}
 
    // Add a light to the bins
    void addLight( LightInfo *light );
+
+   // Clear all lights from the bins
+   void clearAllLights();
 
    virtual bool setTargetSize(const Point2I &newTargetSize);
 
    // ConsoleObject interface
    DECLARE_CONOBJECT(AdvancedLightBinManager);
 
-   bool MRTLightmapsDuringPrePass() const { return mMRTLightmapsDuringPrePass; }
-   void MRTLightmapsDuringPrePass(bool val);
+   bool MRTLightmapsDuringDeferred() const { return mMRTLightmapsDuringDeferred; }
+   void MRTLightmapsDuringDeferred(bool val);
 
 
    typedef Signal<void(SceneRenderState *, AdvancedLightBinManager *)> RenderSignal;
@@ -182,6 +189,7 @@ protected:
    {
       LightInfo* lightInfo;
       LightShadowMap* shadowMap;
+      LightShadowMap* dynamicShadowMap;
       LightMaterialInfo* lightMaterial;
       GFXPrimitiveBuffer* primBuffer;
       GFXVertexBuffer* vertBuffer;
@@ -191,7 +199,7 @@ protected:
    Vector<LightBinEntry> mLightBin;
    typedef Vector<LightBinEntry>::iterator LightBinIterator;
 
-   bool mMRTLightmapsDuringPrePass;
+   bool mMRTLightmapsDuringDeferred;
 
    /// Used in setupSGData to set the object transform.
    MatrixF mLightMat;
@@ -220,7 +228,7 @@ protected:
 
    AdvancedLightBufferConditioner *mConditioner;
 
-   typedef GFXVertexPNT FarFrustumQuadVert; 
+   typedef GFXVertexPNTT FarFrustumQuadVert; 
    GFXVertexBufferHandle<FarFrustumQuadVert> mFarFrustumQuadVerts;
 
 

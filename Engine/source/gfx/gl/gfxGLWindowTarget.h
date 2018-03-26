@@ -30,6 +30,8 @@ class GFXGLWindowTarget : public GFXWindowTarget
 public:
 
    GFXGLWindowTarget(PlatformWindow *win, GFXDevice *d);
+   ~GFXGLWindowTarget();
+
    const Point2I getSize() 
    { 
       return mWindow->getClientExtent();
@@ -37,7 +39,7 @@ public:
    virtual GFXFormat getFormat()
    {
       // TODO: Fix me!
-      return GFXFormatR8G8B8A8;
+      return GFXFormatR8G8B8A8_SRGB;
    }
    void makeActive();
    virtual bool present();
@@ -51,12 +53,20 @@ public:
    
 private:
    friend class GFXGLDevice;
+
+   GLuint mCopyFBO, mBackBufferFBO;
+   GFXTexHandle mBackBufferColorTex, mBackBufferDepthTex;
    Point2I size;   
    GFXDevice* mDevice;
    void* mContext;
    void* mFullscreenContext;
    void _teardownCurrentMode();
    void _setupNewMode();
+   void _setupAttachments();
+   void _WindowPresent();
+   //set this windows context to be current
+   void _makeContextCurrent();
+   
 };
 
 #endif

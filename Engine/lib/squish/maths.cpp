@@ -30,6 +30,8 @@
 */
 
 #include "maths.h"
+#include "simd.h"
+#include <cfloat>
 
 namespace squish {
 
@@ -43,7 +45,8 @@ Sym3x3 ComputeWeightedCovariance( int n, Vec3 const* points, float const* weight
 		total += weights[i];
 		centroid += weights[i]*points[i];
 	}
-	centroid /= total;
+	if( total > FLT_EPSILON )
+		centroid /= total;
 
 	// accumulate the covariance matrix
 	Sym3x3 covariance( 0.0f );
@@ -63,6 +66,8 @@ Sym3x3 ComputeWeightedCovariance( int n, Vec3 const* points, float const* weight
 	// return it
 	return covariance;
 }
+
+#if 0
 
 static Vec3 GetMultiplicity1Evector( Sym3x3 const& matrix, float evalue )
 {
@@ -85,11 +90,11 @@ static Vec3 GetMultiplicity1Evector( Sym3x3 const& matrix, float evalue )
 	u[5] = m[0]*m[3] - m[1]*m[1];
 
 	// find the largest component
-	float mc = SquishMath::fabs( u[0] );
+	float mc = std::fabs( u[0] );
 	int mi = 0;
 	for( int i = 1; i < 6; ++i )
 	{
-		float c = SquishMath::fabs( u[i] );
+		float c = std::fabs( u[i] );
 		if( c > mc )
 		{
 			mc = c;
@@ -124,11 +129,11 @@ static Vec3 GetMultiplicity2Evector( Sym3x3 const& matrix, float evalue )
 	m[5] = matrix[5] - evalue;
 
 	// find the largest component
-	float mc = SquishMath::fabs( m[0] );
+	float mc = std::fabs( m[0] );
 	int mi = 0;
 	for( int i = 1; i < 6; ++i )
 	{
-		float c = SquishMath::fabs( m[i] );
+		float c = std::fabs( m[i] );
 		if( c > mc )
 		{
 			mc = c;
@@ -183,21 +188,21 @@ Vec3 ComputePrincipleComponent( Sym3x3 const& matrix )
 	else if( Q < -FLT_EPSILON )
 	{
 		// three distinct roots
-		float theta = SquishMath::atan2( SquishMath::sqrt( -Q ), -0.5f*b );
-		float rho = SquishMath::sqrt( 0.25f*b*b - Q );
+		float theta = std::atan2( std::sqrt( -Q ), -0.5f*b );
+		float rho = std::sqrt( 0.25f*b*b - Q );
 
-		float rt = SquishMath::pow( rho, 1.0f/3.0f );
-		float ct = SquishMath::cos( theta/3.0f );
-		float st = SquishMath::sin( theta/3.0f );
+		float rt = std::pow( rho, 1.0f/3.0f );
+		float ct = std::cos( theta/3.0f );
+		float st = std::sin( theta/3.0f );
 
 		float l1 = ( 1.0f/3.0f )*c2 + 2.0f*rt*ct;
-		float l2 = ( 1.0f/3.0f )*c2 - rt*( ct + ( float )SquishMath::sqrt( 3.0f )*st );
-		float l3 = ( 1.0f/3.0f )*c2 - rt*( ct - ( float )SquishMath::sqrt( 3.0f )*st );
+		float l2 = ( 1.0f/3.0f )*c2 - rt*( ct + ( float )sqrt( 3.0f )*st );
+		float l3 = ( 1.0f/3.0f )*c2 - rt*( ct - ( float )sqrt( 3.0f )*st );
 
 		// pick the larger
-		if( SquishMath::fabs( l2 ) > SquishMath::fabs( l1 ) )
+		if( std::fabs( l2 ) > std::fabs( l1 ) )
 			l1 = l2;
-		if( SquishMath::fabs( l3 ) > SquishMath::fabs( l1 ) )
+		if( std::fabs( l3 ) > std::fabs( l1 ) )
 			l1 = l3;
 
 		// get the eigenvector
@@ -208,19 +213,47 @@ Vec3 ComputePrincipleComponent( Sym3x3 const& matrix )
 		// two roots
 		float rt;
 		if( b < 0.0f )
-			rt = -SquishMath::pow( -0.5f*b, 1.0f/3.0f );
+			rt = -std::pow( -0.5f*b, 1.0f/3.0f );
 		else
-			rt = SquishMath::pow( 0.5f*b, 1.0f/3.0f );
+			rt = std::pow( 0.5f*b, 1.0f/3.0f );
 		
 		float l1 = ( 1.0f/3.0f )*c2 + rt;		// repeated
 		float l2 = ( 1.0f/3.0f )*c2 - 2.0f*rt;
 		
 		// get the eigenvector
-		if( SquishMath::fabs( l1 ) > SquishMath::fabs( l2 ) )
+		if( std::fabs( l1 ) > std::fabs( l2 ) )
 			return GetMultiplicity2Evector( matrix, l1 );
 		else
 			return GetMultiplicity1Evector( matrix, l2 );
 	}
 }
+
+#else
+
+#define POWER_ITERATION_COUNT 	8
+
+Vec3 ComputePrincipleComponent( Sym3x3 const& matrix )
+{
+	Vec4 const row0( matrix[0], matrix[1], matrix[2], 0.0f );
+	Vec4 const row1( matrix[1], matrix[3], matrix[4], 0.0f );
+	Vec4 const row2( matrix[2], matrix[4], matrix[5], 0.0f );
+	Vec4 v = VEC4_CONST( 1.0f );
+	for( int i = 0; i < POWER_ITERATION_COUNT; ++i )
+	{
+		// matrix multiply
+		Vec4 w = row0*v.SplatX();
+		w = MultiplyAdd(row1, v.SplatY(), w);
+		w = MultiplyAdd(row2, v.SplatZ(), w);
+
+		// get max component from xyz in all channels
+		Vec4 a = Max(w.SplatX(), Max(w.SplatY(), w.SplatZ()));
+
+		// divide through and advance
+		v = w*Reciprocal(a);
+	}
+	return v.GetVec3();
+}
+
+#endif
 
 } // namespace squish

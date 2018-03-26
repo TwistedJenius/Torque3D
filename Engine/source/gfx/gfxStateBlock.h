@@ -47,6 +47,8 @@ struct GFXSamplerStateDesc
    GFXTextureFilterType minFilter;
    GFXTextureFilterType mipFilter;
 
+   GFXCmpFunc samplerFunc;
+
    /// The maximum anisotropy used when one of the filter types
    /// is set to anisotropic.
    ///
@@ -89,6 +91,11 @@ struct GFXSamplerStateDesc
 
    /// Returns an modulate, clamp, and point sampled state.
    static GFXSamplerStateDesc getClampPoint();
+
+   bool operator==(const GFXSamplerStateDesc &b) const
+   {
+      return !dMemcmp(this, &b, sizeof(GFXSamplerStateDesc));
+   }
 };
 
 /// GFXStateBlockDesc defines a render state, which is then used to create a GFXStateBlock instance.  

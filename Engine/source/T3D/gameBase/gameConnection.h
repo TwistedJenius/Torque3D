@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #ifndef _GAMECONNECTION_H_
 #define _GAMECONNECTION_H_
 
@@ -45,6 +50,7 @@ enum GameConnectionConstants
    DataBlockQueueCount = 16
 };
 
+class IDisplayDevice;
 class SFXProfile;
 class MatrixF;
 class MatrixF;
@@ -54,8 +60,14 @@ class MoveList;
 struct Move;
 struct AuthInfo;
 
-#define GameString TORQUE_APP_NAME
-
+// To disable datablock caching, remove or comment out the AFX_CAP_DATABLOCK_CACHE define below.
+// Also, at a minimum, the following script preferences should be set to false:
+//   $pref::Client::EnableDatablockCache = false; (in arcane.fx/client/defaults.cs)
+//   $Pref::Server::EnableDatablockCache = false; (in arcane.fx/server/defaults.cs)
+// Alternatively, all script code marked with "DATABLOCK CACHE CODE" can be removed or
+// commented out.
+//
+#define AFX_CAP_DATABLOCK_CACHE
 const F32 MinCameraFov              = 1.f;      ///< min camera FOV
 const F32 MaxCameraFov              = 179.f;    ///< max camera FOV
 
@@ -70,6 +82,8 @@ private:
    char mDisconnectReason[256];
 
    U32  mMissionCRC;             // crc of the current mission file from the server
+
+   F32 mVisibleGhostDistance;
 
 private:
    U32 mLastControlRequestTime;
@@ -86,6 +100,16 @@ private:
    F32   mCameraFov;       ///< Current camera fov (in degrees).
    F32   mCameraPos;       ///< Current camera pos (0-1).
    F32   mCameraSpeed;     ///< Camera in/out speed.
+
+   IDisplayDevice* mDisplayDevice;  ///< Optional client display device that imposes rendering properties.
+   /// @}
+
+   /// @name Client side control scheme that may be referenced by control objects
+   /// @{
+   bool  mUpdateControlScheme;   ///< Set to notify client or server of control scheme change
+   bool  mAbsoluteRotation;      ///< Use absolute rotation values from client, likely through ExtendedMove
+   bool  mAddYawToAbsRot;        ///< Add relative yaw control to the absolute rotation calculation.  Only useful with mAbsoluteRotation.
+   bool  mAddPitchToAbsRot;      ///< Add relative pitch control to the absolute rotation calculation.  Only useful with mAbsoluteRotation.
    /// @}
 
 public:
@@ -143,6 +167,9 @@ public:
    /// @}
 
    bool canRemoteCreate();
+
+   void setVisibleGhostDistance(F32 dist);
+   F32 getVisibleGhostDistance();
 
 private:
    /// @name Connection State
@@ -253,6 +280,14 @@ public:
    bool getControlCameraTransform(F32 dt,MatrixF* mat);
    bool getControlCameraVelocity(Point3F *vel);
 
+   /// Returns the head transform for the control object, using supplemental information
+   /// from the provided IDisplayDevice
+   bool getControlCameraHeadTransform(IDisplayDevice *display, MatrixF *transform);
+
+   /// Returns the eye transforms for the control object, using supplemental information 
+   /// from the provided IDisplayDevice.
+   bool getControlCameraEyeTransforms(IDisplayDevice *display, MatrixF *transforms);
+   
    bool getControlCameraDefaultFov(F32 *fov);
    bool getControlCameraFov(F32 *fov);
    bool setControlCameraFov(F32 fov);
@@ -263,6 +298,16 @@ public:
 
    void setFirstPerson(bool firstPerson);
    
+   bool hasDisplayDevice() const { return mDisplayDevice != NULL; }
+   IDisplayDevice* getDisplayDevice() const { return mDisplayDevice; }
+   void setDisplayDevice(IDisplayDevice* display) { if (mDisplayDevice) mDisplayDevice->setDrawCanvas(NULL); mDisplayDevice = display; }
+   void clearDisplayDevice() { mDisplayDevice = NULL; }
+
+   void setControlSchemeParameters(bool absoluteRotation, bool addYawToAbsRot, bool addPitchToAbsRot);
+   bool getControlSchemeAbsoluteRotation() {return mAbsoluteRotation;}
+   bool getControlSchemeAddYawToAbsRot() {return mAddYawToAbsRot;}
+   bool getControlSchemeAddPitchToAbsRot() {return mAddPitchToAbsRot;}
+
    /// @}
 
    void detectLag();
@@ -340,6 +385,62 @@ protected:
    DECLARE_CALLBACK( void, setLagIcon, (bool state) );
    DECLARE_CALLBACK( void, onDataBlocksDone, (U32 sequence) );
    DECLARE_CALLBACK( void, onFlash, (bool state) );
+
+#ifdef TORQUE_AFX_ENABLED
+   // GameConnection is modified to keep track of object selections which are used in
+   // spell targeting. This code stores the current object selection as well as the
+   // current rollover object beneath the cursor. The rollover object is treated as a
+   // pending object selection and actual object selection is usually made by promoting
+   // the rollover object to the current object selection.
+private:   
+   SimObjectPtr<SceneObject> mRolloverObj;  
+   SimObjectPtr<SceneObject> mPreSelectedObj;  
+   SimObjectPtr<SceneObject> mSelectedObj;  
+   bool          mChangedSelectedObj;
+   U32           mPreSelectTimestamp;
+protected:
+   virtual void  onDeleteNotify(SimObject*);
+public:   
+   void          setRolloverObj(SceneObject*);   
+   SceneObject*  getRolloverObj() { return  mRolloverObj; }   
+   void          setSelectedObj(SceneObject*, bool propagate_to_client=false);   
+   SceneObject*  getSelectedObj() { return  mSelectedObj; }  
+   void          setPreSelectedObjFromRollover();
+   void          clearPreSelectedObj();
+   void          setSelectedObjFromPreSelected();
+   // Flag is added to indicate when a client is fully connected or "zoned-in". 
+   // This information determines when AFX will startup active effects on a newly
+   // added client. 
+private:
+   bool          zoned_in;
+public:
+   bool          isZonedIn() const { return zoned_in; }
+   void          setZonedIn() { zoned_in = true; }
+#endif
+#ifdef AFX_CAP_DATABLOCK_CACHE
+private:
+   static StringTableEntry  server_cache_filename;
+   static StringTableEntry  client_cache_filename;
+   static bool   server_cache_on;
+   static bool   client_cache_on;
+   BitStream*    client_db_stream;
+   U32           server_cache_CRC;
+public:
+   void          repackClientDatablock(BitStream*, S32 start_pos);
+   void          saveDatablockCache(bool on_server);
+   void          loadDatablockCache();
+   bool          loadDatablockCache_Begin();
+   bool          loadDatablockCache_Continue();
+   void          tempDisableStringBuffering(BitStream* bs) const;
+   void          restoreStringBuffering(BitStream* bs) const;
+   void          setServerCacheCRC(U32 crc) { server_cache_CRC = crc; }
+
+   static void   resetDatablockCache();
+   static bool   serverCacheEnabled() { return server_cache_on; }
+   static bool   clientCacheEnabled() { return client_cache_on; }
+   static const char* serverCacheFilename() { return server_cache_filename; }
+   static const char* clientCacheFilename() { return client_cache_filename; }
+#endif
 };
 
 #endif

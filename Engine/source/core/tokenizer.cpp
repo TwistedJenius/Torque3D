@@ -61,7 +61,7 @@ bool Tokenizer::openFile(const char* pFileName)
       delete pStream;
       return false;
    }
-   dStrcpy(mFileName, pFileName);
+   dStrcpy(mFileName, pFileName, 1024);
 
    mBufferSize = pStream->getStreamSize();
    mpBuffer    = new char[mBufferSize];
@@ -99,7 +99,7 @@ void Tokenizer::setBuffer(const char* buffer, U32 bufferSize)
 
    mBufferSize = bufferSize;
    mpBuffer    = new char[mBufferSize + 1];
-   dStrcpy(mpBuffer, buffer);
+   dStrcpy(mpBuffer, buffer, mBufferSize + 1);
 
    reset();
 
@@ -381,6 +381,30 @@ bool Tokenizer::advanceToken(const bool crossLine, const bool assertAvail)
                   // This is the end of the token.  Continue to EOL
                   while (mCurrPos < mBufferSize && (mpBuffer[mCurrPos] != '\n' && mpBuffer[mCurrPos] != '\r'))
                      mCurrPos++;
+                  cont = false;
+               }
+            }
+            else if (c == '/' && mpBuffer[mCurrPos+1] == '*')
+            {
+               // Block quote...
+               if (currPosition == 0)
+               {
+                  // continue to end of block, then let crossLine determine on the next pass
+                  while (mCurrPos < mBufferSize - 1 && (mpBuffer[mCurrPos] != '*' || mpBuffer[mCurrPos + 1] != '/'))
+                     mCurrPos++;
+
+                  if (mCurrPos < mBufferSize - 1)
+                     mCurrPos += 2;
+               }
+               else
+               {
+                  // This is the end of the token.  Continue to EOL
+                  while (mCurrPos < mBufferSize - 1 && (mpBuffer[mCurrPos] != '*' || mpBuffer[mCurrPos + 1] != '/'))
+                     mCurrPos++;
+
+                  if (mCurrPos < mBufferSize - 1)
+                     mCurrPos += 2;
+
                   cont = false;
                }
             }

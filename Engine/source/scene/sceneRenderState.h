@@ -69,6 +69,9 @@ class SceneRenderState
       /// The type of scene render pass we're doing.
       ScenePassType mScenePassType;
 
+      /// The render style being performed
+      SceneRenderStyle mSceneRenderStyle;
+
       /// The render pass which we are setting up with this scene state.
       RenderPassManager* mRenderPass;
 
@@ -91,7 +94,7 @@ class SceneRenderState
       Point3F mVectorEye;
 
       /// Global ambient light color.
-      ColorF mAmbientLightColor;
+      LinearColorF mAmbientLightColor;
 
       /// Forces bin based post effects to be disabled
       /// during rendering with this scene state.
@@ -139,8 +142,11 @@ class SceneRenderState
       const SceneCullingState& getCullingState() const { return mCullingState; }
       SceneCullingState& getCullingState() { return mCullingState; }
 
-      /// Returns the root frustum.
-      const Frustum& getFrustum() const { return getCullingState().getFrustum(); }
+      /// Returns the root culling frustum.
+      const Frustum& getCullingFrustum() const { return getCullingState().getCullingFrustum(); }
+
+      /// Returns the root camera frustum.
+      const Frustum& getCameraFrustum() const { return getCullingState().getCameraFrustum(); }
 
       /// @}
 
@@ -177,10 +183,10 @@ class SceneRenderState
       /// light.
       ///
       /// @return The ambient light color for rendering.
-      ColorF getAmbientLightColor() const { return mAmbientLightColor; }
+      LinearColorF getAmbientLightColor() const { return mAmbientLightColor; }
 
       /// Set the global ambient light color to render with.
-      void setAmbientLightColor( const ColorF& color ) { mAmbientLightColor = color; }
+      void setAmbientLightColor( const LinearColorF& color ) { mAmbientLightColor = color; }
 
       /// If true then Advanced Lighting bin draws are disabled during rendering with
       /// this scene state.
@@ -219,6 +225,17 @@ class SceneRenderState
 
       /// @}
 
+      /// @name Render Style
+      /// @{
+
+      /// Get the rendering style used for the scene
+      SceneRenderStyle getSceneRenderStyle() const { return mSceneRenderStyle; }
+
+      /// Set the rendering style used for the scene
+      void setSceneRenderStyle(SceneRenderStyle style) { mSceneRenderStyle = style; }
+
+      /// @}
+
       /// @name Transforms, projections, and viewports.
       /// @{
 
@@ -239,10 +256,10 @@ class SceneRenderState
       const MatrixF& getCameraTransform() const { return getCullingState().getCameraState().getViewWorldMatrix(); }
 
       /// Returns the minimum distance something must be from the camera to not be culled.
-      F32 getNearPlane() const { return getFrustum().getNearDist();   }
+      F32 getNearPlane() const { return getCullingFrustum().getNearDist();   }
 
       /// Returns the maximum distance something can be from the camera to not be culled.
-      F32 getFarPlane() const { return getFrustum().getFarDist();    }
+      F32 getFarPlane() const { return getCullingFrustum().getFarDist();    }
 
       /// Returns the camera vector normalized to 1 / far distance.
       const Point3F& getVectorEye() const { return mVectorEye; }

@@ -43,7 +43,11 @@
 #include "materials/materialFeatureTypes.h"
 #include "console/console.h"
 #include "postFx/postEffect.h"
-#include "lighting/basic/basicLightManager.h"
+#ifdef TORQUE_BASIC_LIGHTING  
+#include "lighting/basic/basicLightManager.h"  
+#else  
+#include "lighting/advanced/advancedLightManager.h"  
+#endif 
 #include "lighting/shadowMap/shadowMatHook.h"
 #include "materials/materialManager.h"
 #include "lighting/shadowMap/lightShadowMap.h"
@@ -53,8 +57,8 @@ SimObjectPtr<RenderPassManager> ProjectedShadow::smRenderPass = NULL;
 SimObjectPtr<PostEffect> ProjectedShadow::smShadowFilter = NULL;
 F32 ProjectedShadow::smDepthAdjust = 10.0f;
 
-float ProjectedShadow::smFadeStartPixelSize = 200.0f;
-float ProjectedShadow::smFadeEndPixelSize = 35.0f;
+F32 ProjectedShadow::smFadeStartPixelSize = 200.0f;
+F32 ProjectedShadow::smFadeEndPixelSize = 35.0f;
 
 
 GFX_ImplementTextureProfile( BLProjectedShadowProfile,
@@ -62,14 +66,14 @@ GFX_ImplementTextureProfile( BLProjectedShadowProfile,
                               GFXTextureProfile::PreserveSize | 
                               GFXTextureProfile::RenderTarget |
                               GFXTextureProfile::Pooled,
-                              GFXTextureProfile::None );
+                              GFXTextureProfile::NONE );
 
 GFX_ImplementTextureProfile( BLProjectedShadowZProfile,
                               GFXTextureProfile::DiffuseMap,
                               GFXTextureProfile::PreserveSize | 
                               GFXTextureProfile::ZTarget |
                               GFXTextureProfile::Pooled,
-                              GFXTextureProfile::None );
+                              GFXTextureProfile::NONE );
 
 
 ProjectedShadow::ProjectedShadow( SceneObject *object )
@@ -230,6 +234,9 @@ bool ProjectedShadow::_updateDecal( const SceneRenderState *state )
       lightCount++;
    }
 
+   if (mShapeBase)
+      fade *= mShapeBase->getFadeVal();
+
    lightDir.normalize();
    
    // No light... no shadow.
@@ -324,7 +331,7 @@ bool ProjectedShadow::_updateDecal( const SceneRenderState *state )
    bool shouldClip = lightDirChanged || hasMoved || hasScaled;
 
    // Now, check and see if the object is visible.
-   const Frustum &frust = state->getFrustum();
+   const Frustum &frust = state->getCullingFrustum();
    if ( frust.isCulled( SphereF( mDecalInstance->mPosition, mDecalInstance->mSize * mDecalInstance->mSize ) ) && !shouldClip )
       return false;
 
@@ -526,8 +533,12 @@ void ProjectedShadow::_renderToTexture( F32 camDist, const TSRenderState &rdata 
    mRenderTarget->resolve();
    GFX->popActiveRenderTarget();
 
-   // If we're close enough then filter the shadow.
-   if ( camDist < BasicLightManager::getShadowFilterDistance() )
+   // If we're close enough then filter the shadow.  
+#ifdef TORQUE_BASIC_LIGHTING  
+   if (camDist < BasicLightManager::getShadowFilterDistance())
+#else  
+   if (camDist < AdvancedLightManager::getShadowFilterDistance())
+#endif  
    {
       if ( !smShadowFilter )
       {

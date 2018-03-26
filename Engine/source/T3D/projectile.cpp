@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "T3D/projectile.h"
 
@@ -126,12 +131,9 @@ IMPLEMENT_CALLBACK( ProjectileData, onCollision, void, ( Projectile* proj, Scene
 				   "@see Projectile\n"
 				  );
 
-const U32 Projectile::csmStaticCollisionMask =  TerrainObjectType    |
-                                                InteriorObjectType   |
-                                                StaticShapeObjectType;
+const U32 Projectile::csmStaticCollisionMask =  TerrainObjectType | StaticShapeObjectType;
 
-const U32 Projectile::csmDynamicCollisionMask = PlayerObjectType        |
-                                                VehicleObjectType;
+const U32 Projectile::csmDynamicCollisionMask = PlayerObjectType | VehicleObjectType;
 
 const U32 Projectile::csmDamageableMask = Projectile::csmDynamicCollisionMask;
 
@@ -193,6 +195,40 @@ ProjectileData::ProjectileData()
    lightDescId = 0;
 }
 
+ProjectileData::ProjectileData(const ProjectileData& other, bool temp_clone) : GameBaseData(other, temp_clone)
+{
+   projectileShapeName = other.projectileShapeName;
+   faceViewer = other.faceViewer; // -- always set to false
+   scale = other.scale;
+   velInheritFactor = other.velInheritFactor;
+   muzzleVelocity = other.muzzleVelocity;
+   impactForce = other.impactForce;
+   isBallistic = other.isBallistic;
+   bounceElasticity = other.bounceElasticity;
+   bounceFriction = other.bounceFriction;
+   gravityMod = other.gravityMod;
+   lifetime = other.lifetime;
+   armingDelay = other.armingDelay;
+   fadeDelay = other.fadeDelay;
+   explosion = other.explosion;
+   explosionId = other.explosionId; // -- for pack/unpack of explosion ptr
+   waterExplosion = other.waterExplosion;
+   waterExplosionId = other.waterExplosionId; // -- for pack/unpack of waterExplosion ptr
+   splash = other.splash;
+   splashId = other.splashId; // -- for pack/unpack of splash ptr
+   decal = other.decal;
+   decalId = other.decalId; // -- for pack/unpack of decal ptr
+   sound = other.sound;
+   lightDesc = other.lightDesc;
+   lightDescId = other.lightDescId; // -- for pack/unpack of lightDesc ptr
+   projectileShape = other.projectileShape; // -- TSShape loads using projectileShapeName
+   activateSeq = other.activateSeq; // -- from projectileShape sequence "activate"
+   maintainSeq = other.maintainSeq; // -- from projectileShape sequence "maintain"
+   particleEmitter = other.particleEmitter;
+   particleEmitterId = other.particleEmitterId; // -- for pack/unpack of particleEmitter ptr
+   particleWaterEmitter = other.particleWaterEmitter;
+   particleWaterEmitterId = other.particleWaterEmitterId; // -- for pack/unpack of particleWaterEmitter ptr
+}
 //--------------------------------------------------------------------------
 
 void ProjectileData::initPersistFields()
@@ -277,6 +313,13 @@ void ProjectileData::initPersistFields()
       "A value of 1.0 will assume \"normal\" influence upon it.\n"
       "The magnitude of gravity is assumed to be 9.81 m/s/s\n\n"
       "@note ProjectileData::isBallistic must be true for this to have any affect.");
+   // disallow some field substitutions
+   onlyKeepClearSubstitutions("explosion");
+   onlyKeepClearSubstitutions("particleEmitter");
+   onlyKeepClearSubstitutions("particleWaterEmitter");
+   onlyKeepClearSubstitutions("sound");
+   onlyKeepClearSubstitutions("splash");
+   onlyKeepClearSubstitutions("waterExplosion");
 
    Parent::initPersistFields();
 }
@@ -323,9 +366,9 @@ bool ProjectileData::preload(bool server, String &errorStr)
          if (Sim::findObject(decalId, decal) == false)
             Con::errorf(ConsoleLogEntry::General, "ProjectileData::preload: Invalid packet, bad datablockId(decal): %d", decalId);
 
-      String errorStr;
-      if( !sfxResolve( &sound, errorStr ) )
-         Con::errorf(ConsoleLogEntry::General, "ProjectileData::preload: Invalid packet: %s", errorStr.c_str());
+      String sfxErrorStr;
+      if( !sfxResolve( &sound, sfxErrorStr ) )
+         Con::errorf(ConsoleLogEntry::General, "ProjectileData::preload: Invalid packet: %s", sfxErrorStr.c_str());
 
       if (!lightDesc && lightDescId != 0)
          if (Sim::findObject(lightDescId, lightDesc) == false)
@@ -553,14 +596,15 @@ S32 ProjectileData::scaleValue( S32 value, bool down )
 //
 Projectile::Projectile()
  : mPhysicsWorld( NULL ),
+   mDataBlock( NULL ),
+   mParticleEmitter( NULL ),
+   mParticleWaterEmitter( NULL ),
+   mSound( NULL ),
    mCurrPosition( 0, 0, 0 ),
    mCurrVelocity( 0, 0, 1 ),
    mSourceObjectId( -1 ),
    mSourceObjectSlot( -1 ),
    mCurrTick( 0 ),
-   mParticleEmitter( NULL ),
-   mParticleWaterEmitter( NULL ),
-   mSound( NULL ),
    mProjectileShape( NULL ),
    mActivateThread( NULL ),
    mMaintainThread( NULL ),
@@ -576,6 +620,11 @@ Projectile::Projectile()
 
    mLightState.clear();
    mLightState.setLightInfo( mLight );
+
+   mDataBlock = 0;
+   ignoreSourceTimeout = false;
+   dynamicCollisionMask = csmDynamicCollisionMask;
+   staticCollisionMask = csmStaticCollisionMask;
 }
 
 Projectile::~Projectile()
@@ -584,6 +633,11 @@ Projectile::~Projectile()
 
    delete mProjectileShape;
    mProjectileShape = NULL;
+   if (mDataBlock && mDataBlock->isTempClone())
+   {
+      delete mDataBlock;
+      mDataBlock = 0;
+   }
 }
 
 //--------------------------------------------------------------------------
@@ -611,6 +665,7 @@ void Projectile::initPersistFields()
    addField("sourceSlot",       TypeS32,     Offset(mSourceObjectSlot, Projectile),
       "@brief The sourceObject's weapon slot that the projectile originates from.\n\n");
 
+   addField("ignoreSourceTimeout",  TypeBool,   Offset(ignoreSourceTimeout, Projectile));
    endGroup("Source");
 
 
@@ -699,6 +754,12 @@ bool Projectile::onAdd()
 {
    if(!Parent::onAdd())
       return false;
+
+   if( !mDataBlock )
+   {
+      Con::errorf("Projectile::onAdd - Fail - Not datablock");
+      return false;
+   }
 
    if (isServerObject())
    {
@@ -1014,7 +1075,7 @@ void Projectile::explode( const Point3F &p, const Point3F &n, const U32 collideT
 
       // Client (impact) decal.
       if ( mDataBlock->decal )     
-         gDecalManager->addDecal( p, n, 0.0f, mDataBlock->decal );
+         gDecalManager->addDecal(p, n, 0.0f, mDataBlock->decal);
 
       // Client object
       updateSound();
@@ -1084,7 +1145,7 @@ void Projectile::simulate( F32 dt )
    // disable the source objects collision reponse for a short time while we
    // determine if the projectile is capable of moving from the old position
    // to the new position, otherwise we'll hit ourself
-   bool disableSourceObjCollision = (mSourceObject.isValid() && mCurrTick <= SourceIdTimeoutTicks);
+   bool disableSourceObjCollision = (mSourceObject.isValid() && (ignoreSourceTimeout || mCurrTick <= SourceIdTimeoutTicks));
    if ( disableSourceObjCollision )
       mSourceObject->disableCollision();
    disableCollision();
@@ -1101,76 +1162,75 @@ void Projectile::simulate( F32 dt )
    if ( mPhysicsWorld )
       hit = mPhysicsWorld->castRay( oldPosition, newPosition, &rInfo, Point3F( newPosition - oldPosition) * mDataBlock->impactForce );            
    else 
-      hit = getContainer()->castRay(oldPosition, newPosition, csmDynamicCollisionMask | csmStaticCollisionMask, &rInfo);
+      hit = getContainer()->castRay(oldPosition, newPosition, dynamicCollisionMask | staticCollisionMask, &rInfo);
 
    if ( hit )
    {
       // make sure the client knows to bounce
-      if ( isServerObject() && ( rInfo.object->getTypeMask() & csmStaticCollisionMask ) == 0 )
+      if(isServerObject() && (rInfo.object->getTypeMask() & staticCollisionMask) == 0)
          setMaskBits( BounceMask );
 
+      MatrixF xform( true );
+      xform.setColumn( 3, rInfo.point );
+      setTransform( xform );
+      mCurrPosition    = rInfo.point;
+
+      // Get the object type before the onCollision call, in case
+      // the object is destroyed.
+      U32 objectType = rInfo.object->getTypeMask();
+
+      // re-enable the collision response on the source object since
+      // we need to process the onCollision and explode calls
+      if ( disableSourceObjCollision )
+         mSourceObject->enableCollision();
+
+      // Ok, here is how this works:
+      // onCollision is called to notify the server scripts that a collision has occurred, then
+      // a call to explode is made to start the explosion process. The call to explode is made
+      // twice, once on the server and once on the client.
+      // The server process is responsible for two things:
+      //    1) setting the ExplosionMask network bit to guarantee that the client calls explode
+      //    2) initiate the explosion process on the server scripts
+      // The client process is responsible for only one thing:
+      //    1) drawing the appropriate explosion
+
+      // It is possible that during the processTick the server may have decided that a hit
+      // has occurred while the client prediction has decided that a hit has not occurred.
+      // In this particular scenario the client will have failed to call onCollision and
+      // explode during the processTick. However, the explode function will be called
+      // during the next packet update, due to the ExplosionMask network bit being set.
+      // onCollision will remain uncalled on the client however, therefore no client
+      // specific code should be placed inside the function!
+      onCollision( rInfo.point, rInfo.normal, rInfo.object );
       // Next order of business: do we explode on this hit?
       if ( mCurrTick > mDataBlock->armingDelay || mDataBlock->armingDelay == 0 )
       {
-         MatrixF xform( true );
-         xform.setColumn( 3, rInfo.point );
-         setTransform( xform );
-         mCurrPosition    = rInfo.point;
          mCurrVelocity    = Point3F::Zero;
-
-         // Get the object type before the onCollision call, in case
-         // the object is destroyed.
-         U32 objectType = rInfo.object->getTypeMask();
-
-         // re-enable the collision response on the source object since
-         // we need to process the onCollision and explode calls
-         if ( disableSourceObjCollision )
-            mSourceObject->enableCollision();
-
-         // Ok, here is how this works:
-         // onCollision is called to notify the server scripts that a collision has occurred, then
-         // a call to explode is made to start the explosion process. The call to explode is made
-         // twice, once on the server and once on the client.
-         // The server process is responsible for two things:
-         //    1) setting the ExplosionMask network bit to guarantee that the client calls explode
-         //    2) initiate the explosion process on the server scripts
-         // The client process is responsible for only one thing:
-         //    1) drawing the appropriate explosion
-
-         // It is possible that during the processTick the server may have decided that a hit
-         // has occurred while the client prediction has decided that a hit has not occurred.
-         // In this particular scenario the client will have failed to call onCollision and
-         // explode during the processTick. However, the explode function will be called
-         // during the next packet update, due to the ExplosionMask network bit being set.
-         // onCollision will remain uncalled on the client however, therefore no client
-         // specific code should be placed inside the function!
-         onCollision( rInfo.point, rInfo.normal, rInfo.object );
          explode( rInfo.point, rInfo.normal, objectType );
+      }
 
-         // break out of the collision check, since we've exploded
-         // we don't want to mess with the position and velocity
+      if ( mDataBlock->isBallistic )
+      {
+         // Otherwise, this represents a bounce.  First, reflect our velocity
+         //  around the normal...
+         Point3F bounceVel = mCurrVelocity - rInfo.normal * (mDot( mCurrVelocity, rInfo.normal ) * 2.0);
+         mCurrVelocity = bounceVel;
+
+         // Add in surface friction...
+         Point3F tangent = bounceVel - rInfo.normal * mDot(bounceVel, rInfo.normal);
+         mCurrVelocity  -= tangent * mDataBlock->bounceFriction;
+
+         // Now, take elasticity into account for modulating the speed of the grenade
+         mCurrVelocity *= mDataBlock->bounceElasticity;
+
+         // Set the new position to the impact and the bounce
+         // will apply on the next frame.
+         //F32 timeLeft = 1.0f - rInfo.t;
+         newPosition = oldPosition = rInfo.point + rInfo.normal * 0.05f;
       }
       else
       {
-         if ( mDataBlock->isBallistic )
-         {
-            // Otherwise, this represents a bounce.  First, reflect our velocity
-            //  around the normal...
-            Point3F bounceVel = mCurrVelocity - rInfo.normal * (mDot( mCurrVelocity, rInfo.normal ) * 2.0);
-            mCurrVelocity = bounceVel;
-
-            // Add in surface friction...
-            Point3F tangent = bounceVel - rInfo.normal * mDot(bounceVel, rInfo.normal);
-            mCurrVelocity  -= tangent * mDataBlock->bounceFriction;
-
-            // Now, take elasticity into account for modulating the speed of the grenade
-            mCurrVelocity *= mDataBlock->bounceElasticity;
-
-            // Set the new position to the impact and the bounce
-            // will apply on the next frame.
-            //F32 timeLeft = 1.0f - rInfo.t;
-            newPosition = oldPosition = rInfo.point + rInfo.normal * 0.05f;
-         }
+         mCurrVelocity    = Point3F::Zero;
       }
    }
 
@@ -1298,6 +1358,7 @@ U32 Projectile::packUpdate( NetConnection *con, U32 mask, BitStream *stream )
             stream->writeRangedU32( U32(mSourceObjectSlot),
                                     0, 
                                     ShapeBase::MaxMountedImages - 1 );
+            stream->writeFlag(ignoreSourceTimeout);
          }
          else 
             // have not recieved the ghost for the source object yet, try again later
@@ -1341,6 +1402,7 @@ void Projectile::unpackUpdate(NetConnection* con, BitStream* stream)
          mSourceObjectId   = stream->readRangedU32( 0, NetConnection::MaxGhostCount );
          mSourceObjectSlot = stream->readRangedU32( 0, ShapeBase::MaxMountedImages - 1 );
 
+         ignoreSourceTimeout = stream->readFlag();
          NetObject* pObject = con->resolveGhost( mSourceObjectId );
          if ( pObject != NULL )
             mSourceObject = dynamic_cast<ShapeBase*>( pObject );

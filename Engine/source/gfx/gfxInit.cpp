@@ -68,17 +68,14 @@ inline static void _GFXInitReportAdapters(Vector<GFXAdapter*> &adapters)
    {
       switch (adapters[i]->mType)
       {
-      case Direct3D9:
-         Con::printf("   Direct 3D (version 9.x) device found");
-         break;
       case OpenGL:
          Con::printf("   OpenGL device found");
          break;
       case NullDevice:
          Con::printf("   Null device found");
          break;
-      case Direct3D8:
-         Con::printf("   Direct 3D (version 8.1) device found");
+      case Direct3D11:
+         Con::printf("   Direct 3D (version 11.x) device found");
          break;
       default :
          Con::printf("   Unknown device found");
@@ -156,44 +153,110 @@ void GFXInit::cleanup()
       SAFE_DELETE( smRegisterDeviceSignal );
 }
 
-GFXAdapter* GFXInit::getAdapterOfType( GFXAdapterType type )
+bool GFXInit::compareAdapterOutputDevice(const GFXAdapter* adapter, const char* outputDevice)
 {
-   GFXAdapter* adapter = NULL;
+   // If the adapter doesn't have an output display device, then it supports all of them
+   if(!adapter->mOutputName[0])
+      return true;
+
+   // Try and match the first part of the output device display name.  For example,
+   // an adapter->mOutputName of "\\.\DISPLAY1" might correspond to a display name
+   // of "\\.\DISPLAY1\Monitor0".  If two monitors are set up in duplicate mode then
+   // they will have the same 'display' part in their display name.
+   return (dStrstr(outputDevice, adapter->mOutputName) == outputDevice);
+}
+
+GFXAdapter* GFXInit::getAdapterOfType( GFXAdapterType type, const char* outputDevice )
+{
+   bool testOutputDevice = false;
+   if(outputDevice && outputDevice[0])
+      testOutputDevice = true;
+
    for( U32 i = 0; i < smAdapters.size(); i++ )
    {
       if( smAdapters[i]->mType == type )
       {
-         adapter = smAdapters[i];
-         break;
+         if(testOutputDevice)
+         {
+            // Check if the output display device also matches
+            if(compareAdapterOutputDevice(smAdapters[i], outputDevice))
+            {
+               return smAdapters[i];
+            }
+         }
+         else
+         {
+            // No need to also test the output display device, so return
+            return smAdapters[i];
+         }
       }
    }
-   return adapter;
+
+   return NULL;
 }
 
-GFXAdapter* GFXInit::chooseAdapter( GFXAdapterType type)
+GFXAdapter* GFXInit::getAdapterOfType(GFXAdapterType type, S32 outputDeviceIndex)
 {
-   GFXAdapter* adapter = GFXInit::getAdapterOfType(type);
+   for (U32 i = 0; i < smAdapters.size(); i++)
+   {
+      if (smAdapters[i]->mType == type)
+      {
+         if (smAdapters[i]->mIndex == outputDeviceIndex)
+         {
+            return smAdapters[i];
+         }
+      }
+   }
+
+   return NULL;
+}
+
+GFXAdapter* GFXInit::chooseAdapter( GFXAdapterType type, const char* outputDevice)
+{
+   GFXAdapter* adapter = GFXInit::getAdapterOfType(type, outputDevice);
    
    if(!adapter && type != OpenGL)
    {
       Con::errorf("The requested renderer, %s, doesn't seem to be available."
                   " Trying the default, OpenGL.", getAdapterNameFromType(type));
-      adapter = GFXInit::getAdapterOfType(OpenGL);         
+      adapter = GFXInit::getAdapterOfType(OpenGL, outputDevice);
    }
    
    if(!adapter)
    {
       Con::errorf("The OpenGL renderer doesn't seem to be available. Trying the GFXNulDevice.");
-      adapter = GFXInit::getAdapterOfType(NullDevice);
+      adapter = GFXInit::getAdapterOfType(NullDevice, "");
    }
    
    AssertFatal( adapter, "There is no rendering device available whatsoever.");
    return adapter;
 }
 
+GFXAdapter* GFXInit::chooseAdapter(GFXAdapterType type, S32 outputDeviceIndex)
+{
+   GFXAdapter* adapter = GFXInit::getAdapterOfType(type, outputDeviceIndex);
+
+   if (!adapter && type != OpenGL)
+   {
+      Con::errorf("The requested renderer, %s, doesn't seem to be available."
+         " Trying the default, OpenGL.", getAdapterNameFromType(type));
+      adapter = GFXInit::getAdapterOfType(OpenGL, outputDeviceIndex);
+   }
+
+   if (!adapter)
+   {
+      Con::errorf("The OpenGL renderer doesn't seem to be available. Trying the GFXNulDevice.");
+      adapter = GFXInit::getAdapterOfType(NullDevice, 0);
+   }
+
+   AssertFatal(adapter, "There is no rendering device available whatsoever.");
+   return adapter;
+}
+
 const char* GFXInit::getAdapterNameFromType(GFXAdapterType type)
 {
-   static const char* _names[] = { "OpenGL", "D3D9", "D3D8", "NullDevice", "Xenon" };
+   // must match GFXAdapterType order
+   static const char* _names[] = { "OpenGL", "D3D11", "NullDevice" };
    
    if( type < 0 || type >= GFXAdapterType_Count )
    {
@@ -215,8 +278,8 @@ GFXAdapterType GFXInit::getAdapterTypeFromName(const char* name)
    
    if( ret == -1 )
    {
-      Con::errorf( "GFXInit::getAdapterTypeFromName - Invalid renderer name, defaulting to D3D9" );
-      ret = Direct3D9;
+      Con::errorf( "GFXInit::getAdapterTypeFromName - Invalid renderer name, defaulting to D3D11" );
+      ret = Direct3D11;
    }
    
    return (GFXAdapterType)ret;
@@ -226,8 +289,24 @@ GFXAdapter *GFXInit::getBestAdapterChoice()
 {
    // Get the user's preference for device...
    const String   renderer   = Con::getVariable("$pref::Video::displayDevice");
-   GFXAdapterType adapterType = getAdapterTypeFromName(renderer);
-   GFXAdapter     *adapter    = chooseAdapter(adapterType);
+   const String   outputDevice = Con::getVariable("$pref::Video::displayOutputDevice");
+   const String   adapterDevice = Con::getVariable("$Video::forceDisplayAdapter");
+
+   GFXAdapterType adapterType = getAdapterTypeFromName(renderer.c_str());;
+   GFXAdapter     *adapter = NULL;
+
+   if (adapterDevice.isEmpty())
+   {
+      adapter = chooseAdapter(adapterType, outputDevice.c_str());
+   }
+   else
+   {
+     S32 adapterIdx = dAtoi(adapterDevice.c_str());
+     if (adapterIdx == -1)
+        adapter = chooseAdapter(adapterType, outputDevice.c_str());
+     else
+        adapter = chooseAdapter(adapterType, adapterIdx);
+   }
 
    // Did they have one? Return it.
    if(adapter)
@@ -239,34 +318,27 @@ GFXAdapter *GFXInit::getBestAdapterChoice()
    //
    // If D3D is unavailable, we're not on windows, so GL is de facto the
    // best choice!
-   F32 highestSM9 = 0.f, highestSMGL = 0.f;
-   GFXAdapter  *foundAdapter8 = NULL, *foundAdapter9 = NULL, 
-               *foundAdapterGL = NULL;
+   F32 highestSMDX = 0.f, highestSMGL = 0.f;
+   GFXAdapter *foundAdapterGL = NULL, *foundAdapter11 = NULL;
 
-   for(S32 i=0; i<smAdapters.size(); i++)
+   for (S32 i = 0; i<smAdapters.size(); i++)
    {
       GFXAdapter *currAdapter = smAdapters[i];
-      switch(currAdapter->mType)
+      switch (currAdapter->mType)
       {
-      case Direct3D9:
-         if(currAdapter->mShaderModel > highestSM9)
+      case Direct3D11:
+         if (currAdapter->mShaderModel > highestSMDX)
          {
-            highestSM9 = currAdapter->mShaderModel;
-            foundAdapter9 = currAdapter;
+            highestSMDX = currAdapter->mShaderModel;
+            foundAdapter11 = currAdapter;
          }
          break;
-
       case OpenGL:
-         if(currAdapter->mShaderModel > highestSMGL)
+         if (currAdapter->mShaderModel > highestSMGL)
          {
             highestSMGL = currAdapter->mShaderModel;
             foundAdapterGL = currAdapter;
          }
-         break;
-
-      case Direct3D8:
-         if(!foundAdapter8)
-            foundAdapter8 = currAdapter;
          break;
 
       default:
@@ -274,15 +346,12 @@ GFXAdapter *GFXInit::getBestAdapterChoice()
       }
    }
 
-   // Return best found in order DX9, GL, DX8.
-   if(foundAdapter9)
-      return foundAdapter9;
+   // Return best found in order DX11, GL
+   if (foundAdapter11)
+      return foundAdapter11;
 
-   if(foundAdapterGL)
+   if (foundAdapterGL)
       return foundAdapterGL;
-
-   if(foundAdapter8)
-      return foundAdapter8;
 
    // Uh oh - we didn't find anything. Grab whatever we can that's not Null...
    for(S32 i=0; i<smAdapters.size(); i++)
@@ -341,7 +410,7 @@ void GFXInit::enumerateAdapters()
 
 GFXDevice *GFXInit::createDevice( GFXAdapter *adapter ) 
 {
-   Con::printf("Attempting to create GFX device: %s", adapter->getName());
+   Con::printf("Attempting to create GFX device: %s [%s]", adapter->getName(), adapter->getOutputName());
 
    GFXDevice* temp = adapter->mCreateDeviceInstanceDelegate(adapter->mIndex);
    if (temp)
@@ -387,8 +456,22 @@ DefineEngineStaticMethod( GFXInit, getAdapterName, String, ( S32 index ),,
    return String::EmptyString;
 }
 
+DefineEngineStaticMethod( GFXInit, getAdapterOutputName, String, ( S32 index ),,
+   "Returns the name of the graphics adapter's output display device.\n"
+   "@param index The index of the adapter." )
+{
+   Vector<GFXAdapter*> adapters( __FILE__, __LINE__ );
+   GFXInit::getAdapters(&adapters);
+
+   if(index >= 0 && index < adapters.size())
+      return adapters[index]->mOutputName;
+
+   Con::errorf( "GFXInit::getAdapterOutputName - Out of range adapter index." );
+   return String::EmptyString;
+}
+
 DefineEngineStaticMethod( GFXInit, getAdapterType, GFXAdapterType, ( S32 index ),,
-   "Returns the type (D3D9, D3D8, GL, Null) of a graphics adapter.\n"
+   "Returns the type (D3D11, GL, Null) of a graphics adapter.\n"
    "@param index The index of the adapter." )
 {
    Vector<GFXAdapter*> adapters( __FILE__, __LINE__ );
@@ -486,7 +569,7 @@ DefineEngineStaticMethod( GFXInit, createNullDevice, void, (),,
    GFXInit::enumerateAdapters();
  
    // Create a device.
-   GFXAdapter *a = GFXInit::chooseAdapter(NullDevice);
+   GFXAdapter *a = GFXInit::chooseAdapter(NullDevice, "");
  
    GFXDevice *newDevice = GFX;
  

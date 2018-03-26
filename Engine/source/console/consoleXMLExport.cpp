@@ -21,6 +21,7 @@
 //-----------------------------------------------------------------------------
 
 #include "console/consoleInternal.h"
+#include "console/engineAPI.h"
 #include "console/consoleObject.h"
 #include "console/SimXMLDocument.h"
 
@@ -255,7 +256,7 @@ namespace Con {
       mXML->pushNewElement("EnumTables");
 
       // write out the used EnumTables
-      for (int i = 0; i < enumTables.size(); i++)
+      for (S32 i = 0; i < enumTables.size(); i++)
       {
          mXML->pushNewElement("EnumTable");
 
@@ -267,7 +268,7 @@ namespace Con {
 
          mXML->pushNewElement("Enums");
 
-         for (int j = 0; j < table->size; j++)
+         for (S32 j = 0; j < table->size; j++)
          {
             mXML->pushNewElement("Enum");
 
@@ -313,13 +314,13 @@ namespace Con {
 }; // namespace Con
 
 
-ConsoleFunction(consoleExportXML, const char*, 1, 1, "Exports console definition XML representation")
+DefineConsoleFunction( consoleExportXML, const char*, (), ,"Exports console definition XML representation" )
 {
    Con::XMLExport xmlExport;
    String xml;
    xmlExport.exportXML(xml);
-   char* ret = Con::getReturnBuffer(xml.length() + 1);
-   dStrcpy(ret, xml.c_str());
+   char* ret = Con::getReturnBuffer(xml.size());
+   dStrcpy(ret, xml.c_str(), xml.size());
    return ret;
 }
 

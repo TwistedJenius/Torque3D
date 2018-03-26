@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #ifndef _FOLIAGEREPLICATOR_H_
 #define _FOLIAGEREPLICATOR_H_
 
@@ -47,12 +52,10 @@
 #define AREA_ANIMATION_ARC         (1.0f / 360.0f)
 
 #define FXFOLIAGEREPLICATOR_COLLISION_MASK   (   TerrainObjectType     |   \
-                                                 InteriorObjectType    |   \
                                                  StaticShapeObjectType |   \
                                                  WaterObjectType      )
 
 #define FXFOLIAGEREPLICATOR_NOWATER_COLLISION_MASK   (   TerrainObjectType      |   \
-                                          InteriorObjectType      |   \
                                           StaticShapeObjectType   )
 
 
@@ -66,16 +69,16 @@
 class fxFoliageItem
 {
 public:
-   MatrixF     Transform;		
-   F32         Width;			
-   F32         Height;			
-   Box3F			FoliageBox;		
-   bool			Flipped;			
+   MatrixF     Transform;     
+   F32         Width;         
+   F32         Height;        
+   Box3F       FoliageBox;    
+   bool        Flipped;       
    F32         SwayPhase;     
    F32         SwayTimeRatio; 
-   F32         LightPhase;		
+   F32         LightPhase;    
    F32         LightTimeRatio; 
-	U32         LastFrameSerialID; 
+   U32         LastFrameSerialID; 
 };
 
 //------------------------------------------------------------------------------
@@ -88,7 +91,7 @@ public:
    fxFoliageCulledList(Box3F SearchBox, fxFoliageCulledList* InVec);
    ~fxFoliageCulledList() {};
 
-   void FindCandidates(Box3F SearchBox, fxFoliageCulledList* InVec);
+   void FindCandidates(const Box3F& SearchBox, fxFoliageCulledList* InVec);
 
    U32 GetListCount(void) { return mCulledObjectSet.size(); };
    fxFoliageItem* GetElement(U32 index) { return mCulledObjectSet[index]; };
@@ -106,9 +109,9 @@ public:
    Box3F               QuadrantBox;
    fxFoliageQuadrantNode*   QuadrantChildNode[4];
    Vector<fxFoliageItem*>   RenderList;
-	// Used in DrawIndexPrimitive call.
-	U32							 startIndex;
-	U32							 primitiveCount;
+   // Used in DrawIndexPrimitive call.
+   U32                      startIndex;
+   U32                      primitiveCount;
 };
 
 
@@ -128,7 +131,7 @@ public:
 public:
    bool IsQuadrantVisible(const Box3F VisBox, const MatrixF& RenderTransform);
    void SetupClipPlanes(SceneRenderState* state, const F32 FarClipPlane);
-   void DrawQuadBox(const Box3F& QuadBox, const ColorF Colour);
+   void DrawQuadBox(const Box3F& QuadBox, const LinearColorF Colour);
 };
 
 
@@ -154,12 +157,12 @@ protected:
 
    void CreateFoliage(void);
    void DestroyFoliage(void);
-	void DestroyFoliageItems();
+   void DestroyFoliageItems();
 
 
    void SyncFoliageReplicators(void);
 
-   Box3F FetchQuadrant(Box3F Box, U32 Quadrant);
+   Box3F FetchQuadrant(const Box3F& Box, U32 Quadrant);
    void ProcessQuadrant(fxFoliageQuadrantNode* pParentNode, fxFoliageCulledList* pCullList, U32 Quadrant);
    void ProcessNodeChildren(fxFoliageQuadrantNode* pParentNode, fxFoliageCulledList* pCullList);
 
@@ -174,11 +177,11 @@ protected:
    Vector<fxFoliageItem*>           mReplicatedFoliage;
    fxFoliageRenderList              mFrustumRenderSet;
 
-	GFXVertexBufferHandle<GFXVertexFoliage> mVertexBuffer;
-	GFXPrimitiveBufferHandle	mPrimBuffer;
+   GFXVertexBufferHandle<GFXVertexFoliage> mVertexBuffer;
+   GFXPrimitiveBufferHandle   mPrimBuffer;
    GFXShaderRef               mShader;
    ShaderData*                mShaderData;
-	GBitmap*							mAlphaLookup;
+   GBitmap*                   mAlphaLookup;
 
    MRandomLCG                 RandomGen;
    F32                        mFadeInGradient;
@@ -195,8 +198,8 @@ protected:
    U32                        mNextAllocatedNodeIdx;      // Next Allocated Node Index.
    U32                        mBillboardsAcquired;        // Billboards Acquired.
 
-	// Used for alpha lookup in the pixel shader
-	GFXTexHandle					mAlphaTexture;
+   // Used for alpha lookup in the pixel shader
+   GFXTexHandle               mAlphaTexture;
 
    GFXStateBlockRef  mPlacementSB;
    GFXStateBlockRef  mRenderSB;
@@ -225,15 +228,15 @@ protected:
 
 
    bool              mDirty;
-	
+   
    void SetupShader();
-	void SetupBuffers();
+   void SetupBuffers();
    void renderObject(ObjectRenderInst *ri, SceneRenderState *state, BaseMatInstance*);
-	void renderBuffers(SceneRenderState* state);
-	void renderArc(const F32 fRadiusX, const F32 fRadiusY);
-	void renderPlacementArea(const F32 ElapsedTime);
-	void renderQuad(fxFoliageQuadrantNode* quadNode, const MatrixF& RenderTransform, const bool UseDebug);
-	void computeAlphaTex();
+   void renderBuffers(SceneRenderState* state);
+   void renderArc(const F32 fRadiusX, const F32 fRadiusY);
+   void renderPlacementArea(const F32 ElapsedTime);
+   void renderQuad(fxFoliageQuadrantNode* quadNode, const MatrixF& RenderTransform, const bool UseDebug);
+   void computeAlphaTex();
 public:
    fxFoliageReplicator();
    ~fxFoliageReplicator();
@@ -311,7 +314,6 @@ public:
       F32               mLightTime;
 
       bool            mAllowOnTerrain;
-      bool            mAllowOnInteriors;
       bool            mAllowStatics;
       bool            mAllowOnWater;
       bool            mAllowWaterSurface;
@@ -320,15 +322,16 @@ public:
       bool            mHideFoliage;
       bool            mShowPlacementArea;
       U32             mPlacementBandHeight;
-      ColorF          mPlaceAreaColour;
+      LinearColorF          mPlaceAreaColour;
 
+      F32             mAmbientModulationBias;
       tagFieldData()
       {
          // Set Defaults.
          mUseDebugInfo         = false;
          mDebugBoxHeight       = 1.0f;
          mSeed                 = 1376312589;
-         mFoliageFile          = StringTable->insert("");
+         mFoliageFile          = StringTable->EmptyString();
          mFoliageTexture       = GFXTexHandle();
          mFoliageCount         = 10;
          mFoliageRetries       = 100;
@@ -371,7 +374,6 @@ public:
          mLightTime            = 5.0f;
 
          mAllowOnTerrain       = true;
-         mAllowOnInteriors     = true;
          mAllowStatics         = true;
          mAllowOnWater         = false;
          mAllowWaterSurface    = false;
@@ -381,6 +383,7 @@ public:
          mShowPlacementArea    = true;
          mPlacementBandHeight  = 25;
          mPlaceAreaColour      .set(0.4f, 0, 0.8f);
+         mAmbientModulationBias = 1.0f;
       }
 
    } mFieldData;

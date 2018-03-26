@@ -57,7 +57,7 @@ protected:
    /// @name Sorting
    /// @{
 
-   static bool smIncreasing;
+   static bool smDecreasing;
    static bool smCaseSensitive;
    static const char* smCompareFunction;
 
@@ -102,7 +102,7 @@ public:
 
    /// Returns the value for a given index.
    /// Will return a null value for an invalid index
-   const String&	getValueFromIndex( S32 index ) const;
+   const String&  getValueFromIndex( S32 index ) const;
    
    ///
    S32 getIndexFromKeyValue( const String &key, const String &value ) const;
@@ -175,15 +175,15 @@ public:
 
    /// This sorts the array.
    /// @param valtest  Determines whether sorting by value or key.
-   /// @param desc     Determines if sorting ascending or descending.
+   /// @param asc      Determines if sorting ascending or descending.
    /// @param numeric  Determines if sorting alpha or numeric search.
-   void sort( bool valtest, bool desc, bool numeric );
+   void sort( bool valtest, bool asc, bool numeric );
    
    /// This sorts the array using a script callback.
    /// @param valtest  Determines whether sorting by value or key.
-   /// @param desc     Determines if sorting ascending or descending.
+   /// @param asc      Determines if sorting ascending or descending.
    /// @param callbackFunctionName Name of the script function.
-   void sort( bool valtest, bool desc, const char* callbackFunctionName );
+   void sort( bool valtest, bool asc, const char* callbackFunctionName );
 
    /// @}
 

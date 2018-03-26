@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #ifndef _TERRDATA_H_
 #define _TERRDATA_H_
 
@@ -73,6 +78,28 @@ protected:
 
       NextFreeMask = Parent::NextFreeMask << 6,
    };
+
+public:
+
+   enum BaseTexFormat
+   {
+      NONE, DDS, PNG
+   };
+
+   static const char* formatToExtension(BaseTexFormat format)
+   {
+      switch (format)
+      {
+      case DDS:
+         return "dds";
+      case PNG:
+         return "png";
+      default:
+         return "";
+      }
+   };
+
+protected:
 
    Box3F mBounds;
 
@@ -131,6 +158,8 @@ protected:
 
    /// The desired size for the base texture.
    U32 mBaseTexSize;
+
+   BaseTexFormat mBaseTexFormat;
 
    ///
    TerrCell *mCell;
@@ -213,7 +242,8 @@ protected:
    // Protected fields
    static bool _setTerrainFile( void *obj, const char *index, const char *data );
    static bool _setSquareSize( void *obj, const char *index, const char *data );
-   static bool _setBaseTexSize( void *obj, const char *index, const char *data );
+   static bool _setBaseTexSize(void *obj, const char *index, const char *data);
+   static bool _setBaseTexFormat(void *obj, const char *index, const char *data);
    static bool _setLightMapSize( void *obj, const char *index, const char *data );
 
 public:
@@ -233,7 +263,8 @@ public:
                   F32 heightScale, 
                   F32 metersPerPixel,
                   const Vector<U8> &layerMap, 
-                  const Vector<String> &materials );
+                  const Vector<String> &materials,
+                  bool flipYAxis = true );
 
 #ifdef TORQUE_TOOLS
    bool exportHeightMap( const UTF8 *filePath, const String &format ) const;
@@ -385,7 +416,7 @@ public:
 
    bool setFile( const FileName& terrFileName );
 
-   void setFile( Resource<TerrainFile> file );
+   void setFile(const Resource<TerrainFile>& file);
 
    bool save(const char* filename);
 
@@ -431,6 +462,13 @@ public:
    U32 packUpdate   (NetConnection *conn, U32 mask, BitStream *stream);
    void unpackUpdate(NetConnection *conn,           BitStream *stream);
    void inspectPostApply();
+ 
+protected:
+   bool mIgnoreZodiacs;
+   U16* zode_primBuffer;
+   void deleteZodiacPrimitiveBuffer();
+public:
+   const U16* getZodiacPrimitiveBuffer();
 };
 
 #endif // _TERRDATA_H_

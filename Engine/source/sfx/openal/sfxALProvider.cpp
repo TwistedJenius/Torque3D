@@ -24,6 +24,7 @@
 #include "sfx/sfxProvider.h"
 #include "sfx/openal/sfxALDevice.h"
 #include "sfx/openal/aldlist.h"
+#include "sfx/openal/LoadOAL.h"
 
 #include "core/strings/stringFunctions.h"
 #include "console/console.h"
@@ -93,18 +94,18 @@ void SFXALProvider::init()
    const char *deviceFormat = "OpenAL v%d.%d %s";
 
    char temp[256];
-   for( int i = 0; i < mALDL->GetNumDevices(); i++ )
+   for( S32 i = 0; i < mALDL->GetNumDevices(); i++ )
    {
       ALDeviceInfo* info = new ALDeviceInfo;
       
       info->name = String( mALDL->GetDeviceName( i ) );
 
-      int major, minor, eax = 0;
+      S32 major, minor, eax = 0;
 
       mALDL->GetDeviceVersion( i, &major, &minor );
 
       // Apologies for the blatent enum hack -patw
-      for( int j = SFXALEAX2; j < SFXALEAXRAM; j++ )
+      for( S32 j = SFXALEAX2; j < SFXALEAXRAM; j++ )
          eax += (int)mALDL->IsExtensionSupported( i, (SFXALCaps)j );
 
       if( eax > 0 )
@@ -113,7 +114,7 @@ void SFXALProvider::init()
          dSprintf( temp, sizeof( temp ), "[EAX %d.0] %s", eax, ( mALDL->IsExtensionSupported( i, SFXALEAXRAM ) ? "EAX-RAM" : "" ) );
       }
       else
-         dStrcpy( temp, "" );
+         dStrcpy( temp, "", 256 );
 
       info->driver = String::ToString( deviceFormat, major, minor, temp );
       info->hasHardware = eax > 0;

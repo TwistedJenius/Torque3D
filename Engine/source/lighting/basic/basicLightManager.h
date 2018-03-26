@@ -41,10 +41,9 @@
 
 class AvailableSLInterfaces;
 class GFXShaderConstHandle;
-class RenderPrePassMgr;
+class RenderDeferredMgr;
 class PlatformTimer;
 
-class blInteriorSystem;
 class blTerrainSystem;
 
 class BasicLightManager : public LightManager
@@ -78,7 +77,7 @@ protected:
    BasicLightManager();
    virtual ~BasicLightManager();
 
-   SimObjectPtr<RenderPrePassMgr> mPrePassRenderBin;
+   SimObjectPtr<RenderDeferredMgr> mDeferredRenderBin;
 
    struct LightingShaderConstants
    {
@@ -121,7 +120,6 @@ protected:
    /// A timer used for tracking update time.
    PlatformTimer *mTimer;
    
-   blInteriorSystem* mInteriorSystem;
    blTerrainSystem* mTerrainSystem;
 
 public:

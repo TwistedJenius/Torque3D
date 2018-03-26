@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #ifndef _SCENECONTAINER_H_
 #define _SCENECONTAINER_H_
 
@@ -95,6 +100,11 @@ enum PolyListContext
    /// A hint that the polyist is used for
    /// selection from an editor or other tool.
    PLC_Selection,
+
+   /// A hint that the polylist is used for
+   /// building a representation of the environment
+   /// used for navigation.
+   PLC_Navigation,
 
    /// A hint that the polyist will be used
    /// to export geometry and would like to have
@@ -299,6 +309,8 @@ class SceneContainer
       void _findSpecialObjects( const Vector< SceneObject* >& vector, const Box3F &box, U32 mask, FindCallback callback, void *key = NULL );   
 
       static void getBinRange( const F32 min, const F32 max, U32& minBin, U32& maxBin );
+public:
+      Vector<SimObjectPtr<SceneObject>*>& getRadiusSearchList() { return mSearchList; }
 };
 
 //-----------------------------------------------------------------------------

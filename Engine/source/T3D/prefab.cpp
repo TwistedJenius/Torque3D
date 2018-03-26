@@ -525,6 +525,32 @@ bool Prefab::isValidChild( SimObject *simobj, bool logWarnings )
    return true;
 }
 
+bool Prefab::buildPolyList(PolyListContext context, AbstractPolyList* polyList, const Box3F &box, const SphereF& sphere)
+{
+   Vector<SceneObject*> foundObjects;
+   mChildGroup->findObjectByType(foundObjects);
+
+   for (S32 i = 0; i < foundObjects.size(); i++)
+   {
+      foundObjects[i]->buildPolyList(context, polyList, box, sphere);
+   }
+
+   return true;
+}
+
+bool Prefab::buildExportPolyList(ColladaUtils::ExportData* exportData, const Box3F &box, const SphereF &sphere)
+{
+   Vector<SceneObject*> foundObjects;
+   mChildGroup->findObjectByType(foundObjects);
+
+   for (S32 i = 0; i < foundObjects.size(); i++)
+   {
+      foundObjects[i]->buildExportPolyList(exportData, box, sphere);
+   }
+
+   return true;
+}
+
 ExplodePrefabUndoAction::ExplodePrefabUndoAction( Prefab *prefab )
 : UndoAction( "Explode Prefab" )
 {

@@ -23,6 +23,7 @@
 #include "platform/platform.h"
 #include "gui/editor/guiFilterCtrl.h"
 
+#include "console/engineAPI.h"
 #include "console/console.h"
 #include "console/consoleTypes.h"
 #include "guiFilterCtrl.h"
@@ -59,10 +60,9 @@ void GuiFilterCtrl::initPersistFields()
    Parent::initPersistFields();
 }
 
-ConsoleMethod( GuiFilterCtrl, getValue, const char*, 2, 2, "Return a tuple containing all the values in the filter."
+DefineConsoleMethod( GuiFilterCtrl, getValue, const char*, (), , "Return a tuple containing all the values in the filter."
 			  "@internal")
 {
-   TORQUE_UNUSED(argv);
    static char buffer[512];
    const Filter *filter = object->get();
    *buffer = 0;
@@ -70,8 +70,8 @@ ConsoleMethod( GuiFilterCtrl, getValue, const char*, 2, 2, "Return a tuple conta
    for (U32 i=0; i < filter->size(); i++)
    {
       char value[32];
-      dSprintf(value, 31, "%1.5f ", *(filter->begin()+i) );
-      dStrcat(buffer, value);
+      dSprintf(value, 32, "%1.5f ", *(filter->begin()+i) );
+      dStrcat(buffer, value, 32);
    }
 
    return buffer;
@@ -83,14 +83,13 @@ ConsoleMethod( GuiFilterCtrl, setValue, void, 3, 20, "(f1, f2, ...)"
 {
    Filter filter;
 
-   argc -= 2;
-   argv += 2;
+   StringStackWrapper args(argc - 2, argv + 2);
 
-   filter.set(argc, argv);
+   filter.set(args.count(), args);
 	object->set(filter);
 }
 
-ConsoleMethod( GuiFilterCtrl, identity, void, 2, 2, "Reset the filtering."
+DefineConsoleMethod( GuiFilterCtrl, identity, void, (), , "Reset the filtering."
 			  "@internal")
 {
    object->identity();
@@ -193,11 +192,11 @@ void GuiFilterCtrl::onRender(Point2I offset, const RectI &updateRect)
    {
       GFX->getDrawUtil()->drawLine( pos.x, pos.y + ( ext.y * ( 1.0f - mIdentity.x ) ), 
                                     pos.x + ext.x, pos.y + ( ext.y * ( 1.0f - mIdentity.y ) ), 
-                                    ColorF( 0.9f, 0.9f, 0.9f ) );
+                                    ColorI( 230, 230, 230 ) );
    }
 
    // draw the curv
-   GFXVertexBufferHandle<GFXVertexPC> verts(GFX, ext.x, GFXBufferTypeVolatile);
+   GFXVertexBufferHandle<GFXVertexPCT> verts(GFX, ext.x, GFXBufferTypeVolatile);
 
    verts.lock();
 
@@ -208,7 +207,7 @@ void GuiFilterCtrl::onRender(Point2I offset, const RectI &updateRect)
       S32 y = (S32)(ext.y*(1.0f-mFilter.getValue(index)));
 
       verts[i].point.set( (F32)(pos.x + i), (F32)(pos.y + y), 0.0f );
-      verts[i].color = GFXVertexColor( ColorF( 0.4f, 0.4f, 0.4f ) );
+      verts[i].color = ColorI( 103, 103, 103 );
    }
 
    verts.unlock();
@@ -240,7 +239,7 @@ void Filter::set(S32 argc, const char *argv[])
    if (argc == 1)
    {  // in the form of one string "1.0 1.0 1.0"
       char list[1024];
-      dStrcpy(list, *argv);    // strtok modifies the string so we need to copy it
+      dStrcpy(list, *argv, 1024);    // strtok modifies the string so we need to copy it
       char *value = dStrtok(list, " ");
       while (value)
       {

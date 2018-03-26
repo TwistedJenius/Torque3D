@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "scene/sceneObject.h"
 
@@ -42,6 +47,8 @@
 #include "math/mathIO.h"
 #include "math/mTransform.h"
 #include "T3D/gameBase/gameProcess.h"
+#include "T3D/gameBase/gameConnection.h"
+#include "T3D/accumulationVolume.h"
 
 IMPLEMENT_CONOBJECT(SceneObject);
 
@@ -140,6 +147,10 @@ SceneObject::SceneObject()
 
    mObjectFlags.set( RenderEnabledFlag | SelectionEnabledFlag );
    mIsScopeAlways = false;
+
+   mAccuTex = NULL;
+   mSelectionFlags = 0;
+   mPathfindingIgnore = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -151,6 +162,7 @@ SceneObject::~SceneObject()
    AssertFatal( !mSceneObjectLinks,
       "SceneObject::~SceneObject() - object is still linked to SceneTrackers" );
 
+   mAccuTex = NULL;
    unlink();
 }
 
@@ -421,6 +433,64 @@ void SceneObject::setScale( const VectorF &scale )
    setMaskBits( ScaleMask );
 }
 
+void SceneObject::setForwardVector(VectorF newForward, VectorF upVector)
+{
+   MatrixF mat = getTransform();
+
+   VectorF up(0.0f, 0.0f, 1.0f);
+   VectorF axisX;
+   VectorF axisY = newForward;
+   VectorF axisZ;
+
+   if (upVector != VectorF::Zero)
+      up = upVector;
+
+   // Validate and normalize input:  
+   F32 lenSq;
+   lenSq = axisY.lenSquared();
+   if (lenSq < 0.000001f)
+   {
+      axisY.set(0.0f, 1.0f, 0.0f);
+      Con::errorf("SceneObject::setForwardVector() - degenerate forward vector");
+   }
+   else
+   {
+      axisY /= mSqrt(lenSq);
+   }
+
+
+   lenSq = up.lenSquared();
+   if (lenSq < 0.000001f)
+   {
+      up.set(0.0f, 0.0f, 1.0f);
+      Con::errorf("SceneObject::setForwardVector() - degenerate up vector - too small");
+   }
+   else
+   {
+      up /= mSqrt(lenSq);
+   }
+
+   if (fabsf(mDot(up, axisY)) > 0.9999f)
+   {
+      Con::errorf("SceneObject::setForwardVector() - degenerate up vector - same as forward");
+      // I haven't really tested this, but i think it generates something which should be not parallel to the previous vector:  
+      F32 tmp = up.x;
+      up.x = -up.y;
+      up.y = up.z;
+      up.z = tmp;
+   }
+
+   // construct the remaining axes:  
+   mCross(axisY, up, &axisX);
+   mCross(axisX, axisY, &axisZ);
+
+   mat.setColumn(0, axisX);
+   mat.setColumn(1, axisY);
+   mat.setColumn(2, axisZ);
+
+   setTransform(mat);
+}
+
 //-----------------------------------------------------------------------------
 
 void SceneObject::resetWorldBox()
@@ -664,6 +734,12 @@ static void scopeCallback( SceneObject* obj, void* conPtr )
 
 void SceneObject::onCameraScopeQuery( NetConnection* connection, CameraScopeQuery* query )
 {
+   SceneManager* sceneManager = getSceneManager();
+   GameConnection* conn  = dynamic_cast<GameConnection*> (connection);
+   if (conn && (query->visibleDistance = conn->getVisibleGhostDistance()) == 0.0f)
+      if ((query->visibleDistance = sceneManager->getVisibleGhostDistance()) == 0.0f)
+         query->visibleDistance = sceneManager->getVisibleDistance();
+
    // Object itself is in scope.
 
    if( this->isScopeable() )
@@ -709,9 +785,9 @@ const char* SceneObject::_getRenderEnabled( void* object, const char* data )
 {
    SceneObject* obj = reinterpret_cast< SceneObject* >( object );
    if( obj->mObjectFlags.test( RenderEnabledFlag ) )
-      return "true";
+      return "1";
    else
-      return "false";
+      return "0";
 }
 
 //-----------------------------------------------------------------------------
@@ -933,7 +1009,8 @@ void SceneObject::setProcessTick( bool t )
 
    if ( mProcessTick )
    {
-      plUnlink();
+      if ( !getMountedObjectCount() )
+         plUnlink(); // Only unlink if there is nothing mounted to us
       mProcessTick = false;
    }
    else
@@ -1188,7 +1265,7 @@ DefineEngineMethod( SceneObject, getType, S32, (),,
 //-----------------------------------------------------------------------------
 
 DefineEngineMethod( SceneObject, mountObject, bool,
-   ( SceneObject* objB, S32 slot, TransformF txfm ), ( MatrixF::Identity ),
+   ( SceneObject* objB, S32 slot, TransformF txfm ), ( TransformF::Identity ),
    "@brief Mount objB to this object at the desired slot with optional transform.\n\n"
 
    "@param objB  Object to mount onto us\n"
@@ -1314,6 +1391,13 @@ DefineEngineMethod( SceneObject, getPosition, Point3F, (),,
    return object->getTransform().getPosition();
 }
 
+DefineEngineMethod( SceneObject, setPosition, void, (Point3F pos),,
+   "Set the object's world position.\n"
+   "@param pos the new world position of the object\n" )
+{
+   return object->setPosition(pos);
+}
+
 //-----------------------------------------------------------------------------
 
 DefineEngineMethod( SceneObject, getEulerRotation, Point3F, (),,
@@ -1431,4 +1515,12 @@ DefineEngineMethod( SceneObject, isGlobalBounds, bool, (),,
    "@return true if the object has a global bounds." )
 {
    return object->isGlobalBounds();
+}
+
+DefineConsoleMethod(SceneObject, setForwardVector, void, (VectorF newForward, VectorF upVector), (VectorF(0, 0, 0), VectorF(0, 0, 1)),
+   "Sets the forward vector of a scene object, making it face Y+ along the new vector.\n"
+   "@param The new forward vector to set.\n"
+   "@param (Optional) The up vector to use to help orient the rotation.")
+{
+   object->setForwardVector(newForward, upVector);
 }

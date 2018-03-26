@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "terrain/terrRender.h"
 
@@ -45,10 +50,15 @@
 
 #include "gfx/gfxDrawUtil.h"
 
+#ifdef TORQUE_AFX_ENABLED
+#include "afx/arcaneFX.h"
+#include "afx/ce/afxZodiacMgr.h"
+#endif
+
 #include "gfx/gfxTransformSaver.h"
 #include "gfx/bitmap/gBitmap.h"
 #include "gfx/bitmap/ddsFile.h"
-#include "gfx/bitmap/ddsUtils.h"
+#include "gfx/bitmap/imageUtils.h"
 #include "terrain/terrMaterial.h"
 #include "gfx/gfxDebugEvent.h"
 #include "gfx/gfxCardProfile.h"
@@ -62,7 +72,7 @@ GFX_ImplementTextureProfile( TerrainLayerTexProfile,
                             GFXTextureProfile::DiffuseMap, 
                             GFXTextureProfile::PreserveSize | 
                             GFXTextureProfile::Dynamic,
-                            GFXTextureProfile::None );
+                            GFXTextureProfile::NONE );
 
 
 void TerrainBlock::_onFlushMaterials()
@@ -83,10 +93,11 @@ void TerrainBlock::_updateMaterials()
    {
       TerrainMaterial *mat = mFile->mMaterials[i];
 
-      if( !mat->getDiffuseMap().isEmpty() )
-         mBaseTextures[i].set( mat->getDiffuseMap(),  
-            &GFXDefaultStaticDiffuseProfile, 
-            "TerrainBlock::_updateMaterials() - DiffuseMap" );
+      if (!mat->getDiffuseMap().isEmpty())
+      {
+         mBaseTextures[i].set(mat->getDiffuseMap(), &GFXStaticTextureSRGBProfile,
+            "TerrainBlock::_updateMaterials() - DiffuseMap");
+      }
       else
          mBaseTextures[ i ] = GFXTexHandle();
 
@@ -94,6 +105,10 @@ void TerrainBlock::_updateMaterials()
       if (  mat->getDetailMap().isNotEmpty() &&
             mat->getDetailDistance() > mMaxDetailDistance )
          mMaxDetailDistance = mat->getDetailDistance();
+
+      if (  mat->getMacroMap().isNotEmpty() &&
+            mat->getMacroDistance() > mMaxDetailDistance )
+         mMaxDetailDistance = mat->getMacroDistance();
    }
 
    if ( mCell )
@@ -109,7 +124,7 @@ void TerrainBlock::_updateLayerTexture()
    if (  mLayerTex.isNull() ||
          mLayerTex.getWidth() != layerSize ||
          mLayerTex.getHeight() != layerSize )
-      mLayerTex.set( layerSize, layerSize, GFXFormatR8G8B8A8, &TerrainLayerTexProfile, "" );
+      mLayerTex.set( layerSize, layerSize, GFXFormatB8G8R8A8, &TerrainLayerTexProfile, "" );
 
    AssertFatal(   mLayerTex.getWidth() == layerSize &&
                   mLayerTex.getHeight() == layerSize,
@@ -166,15 +181,16 @@ bool TerrainBlock::_initBaseShader()
    desc.zDefined = true;
    desc.zWriteEnable = false;
    desc.zEnable = false;
-   desc.setBlend( true, GFXBlendSrcAlpha, GFXBlendInvSrcAlpha );
+   desc.setBlend( true, GFXBlendSrcAlpha, GFXBlendOne  );
    desc.cullDefined = true;
    desc.cullMode = GFXCullNone;
+   desc.colorWriteAlpha = false;
    mBaseShaderSB = GFX->createStateBlock( desc );
 
    return true;
 }
 
-void TerrainBlock::_updateBaseTexture( bool writeToCache )
+void TerrainBlock::_updateBaseTexture(bool writeToCache)
 {
    if ( !mBaseShader && !_initBaseShader() )
       return;
@@ -202,21 +218,23 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
       F32 copyOffsetX = 2.0f * GFX->getFillConventionOffset() / (F32)destSize.x;
       F32 copyOffsetY = 2.0f * GFX->getFillConventionOffset() / (F32)destSize.y;
 
-      const bool needsYFlip = GFX->getAdapterType() == OpenGL;
-
       GFXVertexPT points[4];
-      points[0].point      = Point3F( -1.0 - copyOffsetX, -1.0 + copyOffsetY, 0.0 );
-      points[0].texCoord   = Point2F(  0.0, needsYFlip ? 0.0f : 1.0f );
-      points[1].point      = Point3F( -1.0 - copyOffsetX,  1.0 + copyOffsetY, 0.0 );
-      points[1].texCoord   = Point2F(  0.0, needsYFlip ? 1.0f : 0.0f );
-      points[2].point      = Point3F(  1.0 - copyOffsetX,  1.0 + copyOffsetY, 0.0 );
-      points[2].texCoord   = Point2F(  1.0, needsYFlip ? 1.0f : 0.0f );
-      points[3].point      = Point3F(  1.0 - copyOffsetX, -1.0 + copyOffsetY, 0.0 );
-      points[3].texCoord   = Point2F(  1.0, needsYFlip ? 0.0f : 1.0f );
+      points[0].point = Point3F(1.0 - copyOffsetX, -1.0 + copyOffsetY, 0.0);
+      points[0].texCoord = Point2F(1.0, 1.0f);
+      points[1].point = Point3F(1.0 - copyOffsetX, 1.0 + copyOffsetY, 0.0);
+      points[1].texCoord = Point2F(1.0, 0.0f);
+      points[2].point = Point3F(-1.0 - copyOffsetX, -1.0 + copyOffsetY, 0.0);
+      points[2].texCoord = Point2F(0.0, 1.0f);
+      points[3].point = Point3F(-1.0 - copyOffsetX, 1.0 + copyOffsetY, 0.0);
+      points[3].texCoord = Point2F(0.0, 0.0f);
 
       vb.set( GFX, 4, GFXBufferTypeVolatile );
-      dMemcpy( vb.lock(), points, sizeof(GFXVertexPT) * 4 );
-      vb.unlock();
+      GFXVertexPT *ptr = vb.lock();
+      if(ptr)
+      {
+         dMemcpy( ptr, points, sizeof(GFXVertexPT) * 4 );
+         vb.unlock();
+      }
    }
 
    GFXTexHandle blendTex;
@@ -225,12 +243,12 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
    // use it to render to else we create one.
    if (  mBaseTex.isValid() && 
          mBaseTex->isRenderTarget() &&
-         mBaseTex->getFormat() == GFXFormatR8G8B8A8 &&
+         mBaseTex->getFormat() == GFXFormatR8G8B8A8_SRGB &&
          mBaseTex->getWidth() == destSize.x &&
          mBaseTex->getHeight() == destSize.y )
       blendTex = mBaseTex;
    else
-      blendTex.set( destSize.x, destSize.y, GFXFormatR8G8B8A8, &GFXDefaultRenderTargetProfile, "" );
+      blendTex.set( destSize.x, destSize.y, GFXFormatR8G8B8A8_SRGB, &GFXRenderTargetSRGBProfile, "" );
 
    GFX->pushActiveRenderTarget();   
 
@@ -242,6 +260,8 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
 
    mBaseTarget->attachTexture( GFXTextureTarget::Color0, blendTex );
    GFX->setActiveRenderTarget( mBaseTarget );
+
+   GFX->clear( GFXClearTarget, ColorI(0,0,0,255), 1.0f, 0 );
 
    GFX->setTexture( 0, mLayerTex );
    mBaseShaderConsts->setSafe( mBaseLayerSizeConst, (F32)mLayerTex->getWidth() );      
@@ -265,7 +285,7 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
       mBaseShaderConsts->setSafe( mBaseTexScaleConst, Point2F( scale, -scale ) );
       mBaseShaderConsts->setSafe( mBaseTexIdConst, (F32)i );
 
-      GFX->drawPrimitive( GFXTriangleFan, 0, 2 );
+      GFX->drawPrimitive( GFXTriangleStrip, 0, 2 );
    }
 
    mBaseTarget->resolve();
@@ -282,7 +302,14 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
       GFX->endScene();
 
    /// Do we cache this sucker?
-   if ( writeToCache )
+   if (mBaseTexFormat == NONE || !writeToCache)
+   {
+      // We didn't cache the result, so set the base texture
+      // to the render target we updated.  This should be good
+      // for realtime painting cases.
+      mBaseTex = blendTex;
+   }
+   else if (mBaseTexFormat == DDS)
    {
       String cachePath = _getBaseTexCacheFileName();
 
@@ -308,7 +335,7 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
          blendBmp.extrudeMipLevels();
 
          DDSFile *blendDDS = DDSFile::createDDSFileFromGBitmap( &blendBmp );
-         DDSUtil::squishDDS( blendDDS, GFXFormatDXT1 );
+         ImageUtil::ddsCompress( blendDDS, GFXFormatBC1 );
 
          // Write result to file stream
          blendDDS->write( fs );
@@ -319,10 +346,16 @@ void TerrainBlock::_updateBaseTexture( bool writeToCache )
    }
    else
    {
-      // We didn't cache the result, so set the base texture
-      // to the render target we updated.  This should be good
-      // for realtime painting cases.
-      mBaseTex = blendTex;
+      FileStream stream;
+      if (!stream.open(_getBaseTexCacheFileName(), Torque::FS::File::Write))
+      {
+         mBaseTex = blendTex;
+         return;
+      }
+
+      GBitmap bitmap(blendTex->getWidth(), blendTex->getHeight(), false, GFXFormatR8G8B8A8);
+      blendTex->copyToBmp(&bitmap);
+      bitmap.writeBitmap(formatToExtension(mBaseTexFormat), stream);
    }
 }
 
@@ -398,6 +431,9 @@ void TerrainBlock::_renderBlock( SceneRenderState *state )
    if ( isColorDrawPass )
       lm = LIGHTMGR;
 
+#ifdef TORQUE_AFX_ENABLED
+   bool has_zodiacs = afxZodiacMgr::doesBlockContainZodiacs(state, this);
+#endif
    for ( U32 i=0; i < renderCells.size(); i++ )
    {
       TerrCell *cell = renderCells[i];
@@ -459,8 +495,11 @@ void TerrainBlock::_renderBlock( SceneRenderState *state )
       }
 
       inst->defaultKey = (U32)cell->getMaterials();
-
+#ifdef TORQUE_AFX_ENABLED
+      if (has_zodiacs)
+         afxZodiacMgr::renderTerrainZodiacs(state, this, cell);
       // Submit it for rendering.
+#endif
       renderPass->addInst( inst );
    }
 

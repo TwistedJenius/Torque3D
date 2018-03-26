@@ -27,7 +27,7 @@
 #include "console/simBase.h"
 #endif
 
-#include "platform/event.h"
+#include "platform/input/event.h"
 
 //------------------------------------------------------------------------------
 U8 TranslateOSKeyCode( U8 vcode );
@@ -120,10 +120,6 @@ public:
    static void setModifierKeys(U8 mod) {smModifierKeys = mod;}
 #ifdef LOG_INPUT
    static void log( const char* format, ... );
-#endif
-
-#ifdef TORQUE_OS_XENON
-   static S32 getLockedController();
 #endif
 
    /// Global input routing JournaledSignal; post input events here for

@@ -21,6 +21,7 @@
 //-----------------------------------------------------------------------------
 
 #include "gfx/util/screenspace.h"
+#include "gfx/gfxDevice.h"
 
 // The conversion from screen space to the render target
 // is made more complex because screen space is relative
@@ -41,12 +42,6 @@ void ScreenSpace::RenderTargetParameters(const Point3I &targetSize, const RectI 
    Point2F targetScale( (F32)targetViewport.extent.x / (F32)targetSize.x,
                         (F32)targetViewport.extent.y / (F32)targetSize.y );
 
-   // Get the target half pixel size.
-   const Point2F halfPixel( 0.5f / targetSize.x,
-                            0.5f / targetSize.y );
 
-   rtParams.set( targetOffset.x + halfPixel.x,
-                 targetOffset.y + halfPixel.y,
-                 targetScale.x,
-                 targetScale.y );
+   rtParams.set( targetOffset.x, targetOffset.y, targetScale.x, targetScale.y );
 }

@@ -23,7 +23,7 @@
 #include "gui/worldEditor/worldEditorSelection.h"
 #include "gui/worldEditor/worldEditor.h"
 #include "scene/sceneObject.h"
-
+#include "T3D/entity.h"
 
 IMPLEMENT_CONOBJECT( WorldEditorSelection );
 
@@ -38,8 +38,8 @@ ConsoleDocClass( WorldEditorSelection,
 WorldEditorSelection::WorldEditorSelection()
    :  mCentroidValid(false),
       mAutoSelect(false),
-      mPrevCentroid(0.0f, 0.0f, 0.0f),
-      mContainsGlobalBounds(false)
+      mContainsGlobalBounds(false),
+      mPrevCentroid(0.0f, 0.0f, 0.0f)
 {
    // Selections are transient by default.
    setCanSave( false );
@@ -306,9 +306,9 @@ void WorldEditorSelection::offset( const Point3F& offset, F32 gridSnap )
       
       if( gridSnap != 0.f )
       {
-         wPos.x -= mFmod( wPos.x, gridSnap );
-         wPos.y -= mFmod( wPos.y, gridSnap );
-         wPos.z -= mFmod( wPos.z, gridSnap );
+         wPos.x = _snapFloat(wPos.x, gridSnap);
+         wPos.y = _snapFloat(wPos.y, gridSnap);
+         wPos.z = _snapFloat(wPos.z, gridSnap);
       }
       
       mat.setColumn(3, wPos);
@@ -317,6 +317,22 @@ void WorldEditorSelection::offset( const Point3F& offset, F32 gridSnap )
 
    mCentroidValid = false;
 }
+
+F32 WorldEditorSelection::_snapFloat(const F32 &val, const F32 &snap) const
+{
+   if (snap == 0.0f)
+      return val;
+
+   F32 a = mFmod(val, snap);
+
+   F32 temp = val;
+
+   if (mFabs(a) > (snap / 2))
+      val < 0.0f ? temp -= snap : temp += snap;
+
+   return(temp - a);
+}
+
 
 //-----------------------------------------------------------------------------
 
@@ -394,26 +410,34 @@ void WorldEditorSelection::rotate(const EulerF & rot, const Point3F & center)
    // single selections will rotate around own axis, multiple about world
    if(size() == 1)
    {
-      SceneObject* object = dynamic_cast< SceneObject* >( at( 0 ) );
-      if( object )
+      Entity* eO = dynamic_cast< Entity* >(at(0));
+      if (eO)
       {
-         MatrixF mat = object->getTransform();
+         eO->setTransform(eO->getPosition(), eO->getRotation() + RotationF(rot));
+      }
+      else
+      {
+         SceneObject* object = dynamic_cast<SceneObject*>(at(0));
+         if (object)
+         {
+            MatrixF mat = object->getTransform();
 
-         Point3F pos;
-         mat.getColumn(3, &pos);
+            Point3F pos;
+            mat.getColumn(3, &pos);
 
-         // get offset in obj space
-         Point3F offset = pos - center;
-         MatrixF wMat = object->getWorldTransform();
-         wMat.mulV(offset);
+            // get offset in obj space
+            Point3F offset = pos - center;
+            MatrixF wMat = object->getWorldTransform();
+            wMat.mulV(offset);
 
-         //
-         MatrixF transform(EulerF(0,0,0), -offset);
-         transform.mul(MatrixF(rot));
-         transform.mul(MatrixF(EulerF(0,0,0), offset));
-         mat.mul(transform);
+            //
+            MatrixF transform(EulerF(0, 0, 0), -offset);
+            transform.mul(MatrixF(rot));
+            transform.mul(MatrixF(EulerF(0, 0, 0), offset));
+            mat.mul(transform);
 
-         object->setTransform(mat);
+            object->setTransform(mat);
+         }
       }
    }
    else
@@ -642,10 +666,11 @@ ConsoleMethod( WorldEditorSelection, containsGlobalBounds, bool, 2, 2, "() - Tru
 
 ConsoleMethod( WorldEditorSelection, getCentroid, const char*, 2, 2, "() - Return the median of all object positions in the selection." )
 {
-   char* buffer = Con::getReturnBuffer( 256 );
+   static const U32 bufSize = 256;
+   char* buffer = Con::getReturnBuffer( bufSize );
    const Point3F& centroid = object->getCentroid();
    
-   dSprintf( buffer, 256, "%g %g %g", centroid.x, centroid.y, centroid.z );
+   dSprintf( buffer, bufSize, "%g %g %g", centroid.x, centroid.y, centroid.z );
    return buffer;
 }
 
@@ -653,10 +678,11 @@ ConsoleMethod( WorldEditorSelection, getCentroid, const char*, 2, 2, "() - Retur
 
 ConsoleMethod( WorldEditorSelection, getBoxCentroid, const char*, 2, 2, "() - Return the center of the bounding box around the selection." )
 {
-   char* buffer = Con::getReturnBuffer( 256 );
+   static const U32 bufSize = 256;
+   char* buffer = Con::getReturnBuffer( bufSize );
    const Point3F& boxCentroid = object->getBoxCentroid();
    
-   dSprintf( buffer, 256, "%g %g %g", boxCentroid.x, boxCentroid.y, boxCentroid.z );
+   dSprintf( buffer, bufSize, "%g %g %g", boxCentroid.x, boxCentroid.y, boxCentroid.z );
    return buffer;
 }
 
@@ -682,7 +708,7 @@ ConsoleMethod( WorldEditorSelection, union, void, 3, 3, "( SimSet set ) - Add al
    SimSet* selection;
    if( !Sim::findObject( argv[ 2 ], selection ) )
    {
-      Con::errorf( "WorldEditorSelection::union - no SimSet '%s'", argv[ 2 ] );
+      Con::errorf( "WorldEditorSelection::union - no SimSet '%s'", (const char*)argv[ 2 ] );
       return;
    }
    
@@ -698,7 +724,7 @@ ConsoleMethod( WorldEditorSelection, subtract, void, 3, 3, "( SimSet ) - Remove 
    SimSet* selection;
    if( !Sim::findObject( argv[ 2 ], selection ) )
    {
-      Con::errorf( "WorldEditorSelection::subtract - no SimSet '%s'", argv[ 2 ] );
+      Con::errorf( "WorldEditorSelection::subtract - no SimSet '%s'", (const char*)argv[ 2 ] );
       return;
    }
    

@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "T3D/fx/explosion.h"
 
@@ -49,6 +54,8 @@
 #include "T3D/gameBase/gameProcess.h"
 #include "renderInstance/renderPassManager.h"
 #include "console/engineAPI.h"
+
+#include "sfx/sfxProfile.h"
 
 IMPLEMENT_CONOBJECT(Explosion);
 
@@ -106,18 +113,31 @@ ConsoleDocClass( Explosion,
    "   lightEndBrightness = 0.0;\n"
    "   lightNormalOffset = 2.0;\n"
    "};\n\n"
-   "function createExplosion()\n"
+   "function ServerPlayExplosion(%position, %datablock)\n"
    "{\n"
-   "   // Create a new explosion - it will explode automatically\n"
-   "   %pos = \"0 0 100\";\n"
-   "   %obj = new Explosion()\n"
+   "   // Play the given explosion on every client.\n"
+   "   // The explosion will be transmitted as an event, not attached to any object.\n"
+   "   for(%idx = 0; %idx < ClientGroup.getCount(); %idx++)\n"
    "   {\n"
-   "      position = %pos;\n"
-   "      dataBlock = GrenadeLauncherExplosion;\n"
-   "   };\n"
+   "      %client = ClientGroup.getObject(%idx);\n"
+   "      commandToClient(%client, 'PlayExplosion', %position, %datablock.getId());\n"
+   "   }\n"
+   "}\n\n"
+   "function clientCmdPlayExplosion(%position, %effectDataBlock)\n"
+   "{\n"
+   "   // Play an explosion sent by the server. Make sure this function is defined\n"
+   "   // on the client.\n"
+   "   if (isObject(%effectDataBlock))\n"
+   "   {\n"
+   "      new Explosion()\n"
+   "      {\n"
+   "         position = %position;\n"
+   "         dataBlock = %effectDataBlock;\n"
+   "      };\n"
+   "   }\n"
    "}\n\n"
    "// schedule an explosion\n"
-   "schedule(1000, 0, createExplosion);\n"
+   "schedule(1000, 0, ServerPlayExplosion, \"0 0 0\", GrenadeLauncherExplosion);\n"
    "@endtsexample"
 );
 
@@ -125,8 +145,17 @@ ConsoleDocClass( Explosion,
 
 MRandomLCG sgRandom(0xdeadbeef);
 
+//WLE - Vince - The defaults are bad, the whole point of calling this function\
+//is to determine the explosion coverage on a object.  Why would you want them
+//To call this with a null for the ID?  In fact, it just returns a 1f if
+//it can't find the object.  Seems useless to me.  Cause how can I apply
+//damage to a object that doesn't exist?
 
-DefineEngineFunction(calcExplosionCoverage, F32, (Point3F pos, S32 id, U32 covMask),(Point3F(0.0f,0.0f,0.0f), NULL, NULL),
+//I could possible see a use with passing in a null covMask, but even that
+//sounds flaky because it will be 100 percent if your saying not to take
+//any thing in consideration for coverage.  So I'm removing these defaults they are just bad.
+
+DefineEngineFunction(calcExplosionCoverage, F32, (Point3F pos, S32 id, U32 covMask),,
    "@brief Calculates how much an explosion effects a specific object.\n\n"
    "Use this to determine how much damage to apply to objects based on their "
    "distance from the explosion's center point, and whether the explosion is "
@@ -151,7 +180,7 @@ DefineEngineFunction(calcExplosionCoverage, F32, (Point3F pos, S32 id, U32 covMa
 
    SceneObject* sceneObject = NULL;
    if (Sim::findObject(id, sceneObject) == false) {
-      Con::warnf(ConsoleLogEntry::General, "calcExplosionCoverage: couldn't find object: %s", id);
+      Con::warnf(ConsoleLogEntry::General, "calcExplosionCoverage: couldn't find object: %d", id);
       return 1.0f;
    }
    if (sceneObject->isClientObject() || sceneObject->getContainer() == NULL) {
@@ -232,10 +261,6 @@ ExplosionData::ExplosionData()
    lifetimeVariance = 0;
    offset = 0.0f;
 
-   shockwave = NULL;
-   shockwaveID = 0;
-   shockwaveOnTerrain = false;
-
    shakeCamera = false;
    camShakeFreq.set( 10.0f, 10.0f, 10.0f );
    camShakeAmp.set( 1.0f, 1.0f, 1.0f );
@@ -261,6 +286,105 @@ ExplosionData::ExplosionData()
    lightStartBrightness = 1.0f;
    lightEndBrightness = 1.0f;
    lightNormalOffset = 0.1f;
+}
+
+//#define TRACK_EXPLOSION_DATA_CLONES
+
+#ifdef TRACK_EXPLOSION_DATA_CLONES
+static int explosion_data_clones = 0;
+#endif
+
+ExplosionData::ExplosionData(const ExplosionData& other, bool temp_clone) : GameBaseData(other, temp_clone)
+{
+#ifdef TRACK_EXPLOSION_DATA_CLONES
+   explosion_data_clones++;
+   if (explosion_data_clones == 1)
+      Con::errorf("ExplosionData -- Clones are on the loose!");
+#endif
+
+   dtsFileName = other.dtsFileName;
+   faceViewer = other.faceViewer;
+   particleDensity = other.particleDensity;
+   particleRadius = other.particleRadius;
+   soundProfile = other.soundProfile;
+   particleEmitter = other.particleEmitter;
+   particleEmitterId = other.particleEmitterId; // -- for pack/unpack of particleEmitter ptr 
+   explosionScale = other.explosionScale;
+   playSpeed = other.playSpeed;
+   explosionShape = other.explosionShape; // -- TSShape loaded using dtsFileName
+   explosionAnimation = other.explosionAnimation; // -- from explosionShape sequence "ambient"
+   dMemcpy( emitterList, other.emitterList, sizeof( emitterList ) );
+   dMemcpy( emitterIDList, other.emitterIDList, sizeof( emitterIDList ) ); // -- for pack/unpack of emitterList ptrs
+   dMemcpy( debrisList, other.debrisList, sizeof( debrisList ) );
+   dMemcpy( debrisIDList, other.debrisIDList, sizeof( debrisIDList ) ); // -- for pack/unpack of debrisList ptrs 
+   debrisThetaMin = other.debrisThetaMin;
+   debrisThetaMax = other.debrisThetaMax;
+   debrisPhiMin = other.debrisPhiMin;
+   debrisPhiMax = other.debrisPhiMax;
+   debrisNum = other.debrisNum;
+   debrisNumVariance = other.debrisNumVariance;
+   debrisVelocity = other.debrisVelocity;
+   debrisVelocityVariance = other.debrisVelocityVariance;
+   dMemcpy( explosionList, other.explosionList, sizeof( explosionList ) );
+   dMemcpy( explosionIDList, other.explosionIDList, sizeof( explosionIDList ) ); // -- for pack/unpack of explosionList ptrs
+   delayMS = other.delayMS;
+   delayVariance = other.delayVariance;
+   lifetimeMS = other.lifetimeMS;
+   lifetimeVariance = other.lifetimeVariance;
+   offset = other.offset;
+   dMemcpy( sizes, other.times, sizeof( sizes ) );
+   dMemcpy( times, other.times, sizeof( times ) );
+   shakeCamera = other.shakeCamera;
+   camShakeFreq = other.camShakeFreq;
+   camShakeAmp = other.camShakeAmp;
+   camShakeDuration = other.camShakeDuration;
+   camShakeRadius = other.camShakeRadius;
+   camShakeFalloff = other.camShakeFalloff;
+   lightStartRadius = other.lightStartRadius;
+   lightEndRadius = other.lightEndRadius;
+   lightStartColor = other.lightStartColor;
+   lightEndColor = other.lightEndColor;
+   lightStartBrightness = other.lightStartBrightness;
+   lightEndBrightness = other.lightEndBrightness;
+   lightNormalOffset = other.lightNormalOffset;
+   // Note - Explosion calls mDataBlock->getName() in warning messages but
+   //   that should be safe.
+}
+
+ExplosionData::~ExplosionData()
+{
+   if (!isTempClone())
+      return;
+
+   if (soundProfile && soundProfile->isTempClone())
+   {
+      delete soundProfile;
+      soundProfile = 0;
+   }
+
+   // particleEmitter, emitterList[*], debrisList[*], explosionList[*] will delete themselves
+
+#ifdef TRACK_EXPLOSION_DATA_CLONES
+   if (explosion_data_clones > 0)
+   {
+      explosion_data_clones--;
+      if (explosion_data_clones == 0)
+         Con::errorf("ExplosionData -- Clones eliminated!");
+   }
+   else
+      Con::errorf("ExplosionData -- Too many clones deleted!");
+#endif
+}
+
+ExplosionData* ExplosionData::cloneAndPerformSubstitutions(const SimObject* owner, S32 index)
+{
+   if (!owner || getSubstitutionCount() == 0)
+      return this;
+
+   ExplosionData* sub_explosion_db = new ExplosionData(*this, true);
+   performSubstitutions(sub_explosion_db, owner, index);
+
+   return sub_explosion_db;
 }
 
 void ExplosionData::initPersistFields()
@@ -298,9 +422,6 @@ void ExplosionData::initPersistFields()
       "@brief List of additional ParticleEmitterData objects to spawn with this "
       "explosion.\n\n"
       "@see particleEmitter" );
-
-//   addField( "shockwave", TypeShockwaveDataPtr, Offset(shockwave, ExplosionData) );
-//   addField( "shockwaveOnTerrain", TypeBool, Offset(shockwaveOnTerrain, ExplosionData) );
 
    addField( "debris", TYPEID< DebrisData >(), Offset(debrisList, ExplosionData), EC_NUM_DEBRIS_TYPES,
       "List of DebrisData objects to spawn with this explosion." );
@@ -397,6 +518,12 @@ void ExplosionData::initPersistFields()
       "Distance (in the explosion normal direction) of the PointLight position "
       "from the explosion center." );
 
+   // disallow some field substitutions
+   onlyKeepClearSubstitutions("debris"); // subs resolving to "~~", or "~0" are OK
+   onlyKeepClearSubstitutions("emitter");
+   onlyKeepClearSubstitutions("particleEmitter");
+   onlyKeepClearSubstitutions("soundProfile");
+   onlyKeepClearSubstitutions("subExplosion");
    Parent::initPersistFields();
 }
 
@@ -593,7 +720,7 @@ void ExplosionData::packData(BitStream* stream)
    }
    U32 count;
    for(count = 0; count < EC_NUM_TIME_KEYS; count++)
-      if(times[i] >= 1)
+      if(times[count] >= 1)
          break;
    count++;
    if(count > EC_NUM_TIME_KEYS)
@@ -736,9 +863,9 @@ bool ExplosionData::preload(bool server, String &errorStr)
       
    if( !server )
    {
-      String errorStr;
-      if( !sfxResolve( &soundProfile, errorStr ) )
-         Con::errorf(ConsoleLogEntry::General, "Error, unable to load sound profile for explosion datablock: %s", errorStr.c_str());
+      String sfxErrorStr;
+      if( !sfxResolve( &soundProfile, sfxErrorStr ) )
+         Con::errorf(ConsoleLogEntry::General, "Error, unable to load sound profile for explosion datablock: %s", sfxErrorStr.c_str());
       if (!particleEmitter && particleEmitterId != 0)
          if (Sim::findObject(particleEmitterId, particleEmitter) == false)
             Con::errorf(ConsoleLogEntry::General, "Error, unable to load particle emitter for explosion datablock");
@@ -771,6 +898,7 @@ bool ExplosionData::preload(bool server, String &errorStr)
 //--------------------------------------
 //
 Explosion::Explosion()
+   : mDataBlock( NULL )
 {
    mTypeMask |= ExplosionObjectType | LightObjectType;
 
@@ -792,6 +920,10 @@ Explosion::Explosion()
    mLight = LIGHTMGR->createLightInfo();
 
    mNetFlags.set( IsGhost );
+   ss_object = 0;
+   ss_index = 0;
+   mDataBlock = 0;
+   soundProfile_clone = 0;
 }
 
 Explosion::~Explosion()
@@ -804,6 +936,18 @@ Explosion::~Explosion()
    }
    
    SAFE_DELETE(mLight);
+   
+   if (soundProfile_clone)
+   { 
+      delete soundProfile_clone;
+      soundProfile_clone = 0;
+   }
+
+   if (mDataBlock && mDataBlock->isTempClone())
+   { 
+      delete mDataBlock;
+      mDataBlock = 0;
+   }
 }
 
 
@@ -830,6 +974,12 @@ bool Explosion::onAdd()
    GameConnection *conn = GameConnection::getConnectionToServer();
    if ( !conn || !Parent::onAdd() )
       return false;
+
+   if( !mDataBlock )
+   {
+      Con::errorf("Explosion::onAdd - Fail - No datablok");
+      return false;
+   }
 
    mDelayMS = mDataBlock->delayMS + sgRandom.randI( -mDataBlock->delayVariance, mDataBlock->delayVariance );
    mEndingMS = mDataBlock->lifetimeMS + sgRandom.randI( -mDataBlock->lifetimeVariance, mDataBlock->lifetimeVariance );
@@ -929,7 +1079,7 @@ bool Explosion::onAdd()
 
 void Explosion::onRemove()
 {
-   for( int i=0; i<ExplosionData::EC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<ExplosionData::EC_NUM_EMITTERS; i++ )
    {
       if( mEmitterList[i] )
       {
@@ -944,10 +1094,7 @@ void Explosion::onRemove()
       mMainEmitter = NULL;
    }
 
-   if (getSceneManager() != NULL)
-      getSceneManager()->removeObjectFromScene(this);
-   if (getContainer() != NULL)
-      getContainer()->removeObject(this);
+   removeFromScene();
 
    Parent::onRemove();
 }
@@ -959,6 +1106,8 @@ bool Explosion::onNewDataBlock( GameBaseData *dptr, bool reload )
    if (!mDataBlock || !Parent::onNewDataBlock( dptr, reload ))
       return false;
 
+   if (mDataBlock->isTempClone())
+      return true;
    scriptOnNewDataBlock();
    return true;
 }
@@ -1114,7 +1263,7 @@ void Explosion::updateEmitters( F32 dt )
 {
    Point3F pos = getPosition();
 
-   for( int i=0; i<ExplosionData::EC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<ExplosionData::EC_NUM_EMITTERS; i++ )
    {
       if( mEmitterList[i] )
       {
@@ -1134,7 +1283,7 @@ void Explosion::launchDebris( Point3F &axis )
       return;
 
    bool hasDebris = false;
-   for( int j=0; j<ExplosionData::EC_NUM_DEBRIS_TYPES; j++ )
+   for( S32 j=0; j<ExplosionData::EC_NUM_DEBRIS_TYPES; j++ )
    {
       if( mDataBlock->debrisList[j] )
       {
@@ -1160,7 +1309,7 @@ void Explosion::launchDebris( Point3F &axis )
 
    U32 numDebris = mDataBlock->debrisNum + sgRandom.randI( -mDataBlock->debrisNumVariance, mDataBlock->debrisNumVariance );
 
-   for( int i=0; i<numDebris; i++ )
+   for( S32 i=0; i<numDebris; i++ )
    {
 
       Point3F launchDir = MathUtils::randomDir( axis, mDataBlock->debrisThetaMin, mDataBlock->debrisThetaMax,
@@ -1171,7 +1320,8 @@ void Explosion::launchDebris( Point3F &axis )
       launchDir *= debrisVel;
 
       Debris *debris = new Debris;
-      debris->setDataBlock( mDataBlock->debrisList[0] );
+      debris->setSubstitutionData(ss_object, ss_index);
+      debris->setDataBlock(mDataBlock->debrisList[0]->cloneAndPerformSubstitutions(ss_object, ss_index));
       debris->setTransform( getTransform() );
       debris->init( pos, launchDir );
 
@@ -1199,7 +1349,8 @@ void Explosion::spawnSubExplosions()
       {
          MatrixF trans = getTransform();
          Explosion* pExplosion = new Explosion;
-         pExplosion->setDataBlock( mDataBlock->explosionList[i] );
+         pExplosion->setSubstitutionData(ss_object, ss_index);
+         pExplosion->setDataBlock(mDataBlock->explosionList[i]->cloneAndPerformSubstitutions(ss_object, ss_index));
          pExplosion->setTransform( trans );
          pExplosion->setInitialState( trans.getPosition(), mInitialNormal, 1);
          if (!pExplosion->registerObject())
@@ -1237,24 +1388,30 @@ bool Explosion::explode()
       resetWorldBox();
    }
 
-   if (mDataBlock->soundProfile)
-      SFX->playOnce( mDataBlock->soundProfile, &getTransform() );
+   SFXProfile* sound_prof = dynamic_cast<SFXProfile*>(mDataBlock->soundProfile);
+   if (sound_prof)
+   {
+      soundProfile_clone = sound_prof->cloneAndPerformSubstitutions(ss_object, ss_index);
+      SFX->playOnce( soundProfile_clone, &getTransform() );
+      if (!soundProfile_clone->isTempClone())
+         soundProfile_clone = 0;
+   }
 
    if (mDataBlock->particleEmitter) {
       mMainEmitter = new ParticleEmitter;
-      mMainEmitter->setDataBlock(mDataBlock->particleEmitter);
+      mMainEmitter->setDataBlock(mDataBlock->particleEmitter->cloneAndPerformSubstitutions(ss_object, ss_index));
       mMainEmitter->registerObject();
 
       mMainEmitter->emitParticles(getPosition(), mInitialNormal, mDataBlock->particleRadius,
          Point3F::Zero, U32(mDataBlock->particleDensity * mFade));
    }
 
-   for( int i=0; i<ExplosionData::EC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<ExplosionData::EC_NUM_EMITTERS; i++ )
    {
       if( mDataBlock->emitterList[i] != NULL )
       {
          ParticleEmitter * pEmitter = new ParticleEmitter;
-         pEmitter->setDataBlock( mDataBlock->emitterList[i] );
+         pEmitter->setDataBlock(mDataBlock->emitterList[i]->cloneAndPerformSubstitutions(ss_object, ss_index));
          if( !pEmitter->registerObject() )
          {
             Con::warnf( ConsoleLogEntry::General, "Could not register emitter for particle of class: %s", mDataBlock->getName() );

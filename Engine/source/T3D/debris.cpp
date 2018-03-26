@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "T3D/debris.h"
 
@@ -41,11 +46,7 @@
 #include "lighting/lightQuery.h"
 
 
-const U32 csmStaticCollisionMask =  TerrainObjectType  |
-                                    InteriorObjectType;
-
-const U32 csmDynamicCollisionMask = StaticShapeObjectType;
-
+const U32 csmStaticCollisionMask = TerrainObjectType | StaticShapeObjectType | StaticObjectType;
 
 IMPLEMENT_CO_DATABLOCK_V1(DebrisData);
 
@@ -100,7 +101,6 @@ DebrisData::DebrisData()
    friction   = 0.2f;
    numBounces = 0;
    bounceVariance = 0;
-   minSpinSpeed = maxSpinSpeed = 0.0;
    staticOnMaxBounce = false;
    explodeOnMaxBounce = false;
    snapOnMaxBounce = false;
@@ -118,12 +118,91 @@ DebrisData::DebrisData()
    ignoreWater = true;
 }
 
+//#define TRACK_DEBRIS_DATA_CLONES
+
+#ifdef TRACK_DEBRIS_DATA_CLONES
+static int debris_data_clones = 0;
+#endif
+
+DebrisData::DebrisData(const DebrisData& other, bool temp_clone) : GameBaseData(other, temp_clone)
+{
+#ifdef TRACK_DEBRIS_DATA_CLONES
+   debris_data_clones++;
+   if (debris_data_clones == 1)
+      Con::errorf("DebrisData -- Clones are on the loose!");
+#endif
+   velocity = other.velocity;
+   velocityVariance = other.velocityVariance;
+   friction = other.friction;
+   elasticity = other.elasticity;
+   lifetime = other.lifetime;
+   lifetimeVariance = other.lifetimeVariance;
+   numBounces = other.numBounces;
+   bounceVariance = other.bounceVariance;
+   minSpinSpeed = other.minSpinSpeed;
+   maxSpinSpeed = other.maxSpinSpeed;
+   explodeOnMaxBounce = other.explodeOnMaxBounce;
+   staticOnMaxBounce = other.staticOnMaxBounce;
+   snapOnMaxBounce = other.snapOnMaxBounce;
+   fade = other.fade;
+   useRadiusMass = other.useRadiusMass;
+   baseRadius = other.baseRadius;
+   gravModifier = other.gravModifier;
+   terminalVelocity = other.terminalVelocity;
+   ignoreWater = other.ignoreWater;
+   shapeName = other.shapeName;
+   shape = other.shape; // -- TSShape loaded using shapeName
+   textureName = other.textureName;
+   explosionId = other.explosionId; // -- for pack/unpack of explosion ptr
+   explosion = other.explosion;
+   dMemcpy( emitterList, other.emitterList, sizeof( emitterList ) );
+   dMemcpy( emitterIDList, other.emitterIDList, sizeof( emitterIDList ) ); // -- for pack/unpack of emitterList ptrs
+}
+
+DebrisData::~DebrisData()
+{
+   if (!isTempClone())
+      return;
+
+#ifdef TRACK_DEBRIS_DATA_CLONES
+   if (debris_data_clones > 0)
+   {
+      debris_data_clones--;
+      if (debris_data_clones == 0)
+         Con::errorf("DebrisData -- Clones eliminated!");
+   }
+   else
+      Con::errorf("DebrisData -- Too many clones deleted!");
+#endif
+}
+
+DebrisData* DebrisData::cloneAndPerformSubstitutions(const SimObject* owner, S32 index)
+{
+   if (!owner || getSubstitutionCount() == 0)
+      return this;
+
+   DebrisData* sub_debris_db = new DebrisData(*this, true);
+   performSubstitutions(sub_debris_db, owner, index);
+
+   return sub_debris_db;
+}
+
+void DebrisData::onPerformSubstitutions() 
+{ 
+   if( shapeName && shapeName[0] != '\0')
+   {
+      shape = ResourceManager::get().load(shapeName);
+      if( bool(shape) == false )
+         Con::errorf("DebrisData::onPerformSubstitutions(): failed to load shape \"%s\"", shapeName);
+   }
+}
+
 bool DebrisData::onAdd()
 {
    if(!Parent::onAdd())
       return false;
 
-   for( int i=0; i<DDC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<DDC_NUM_EMITTERS; i++ )
    {
       if( !emitterList[i] && emitterIDList[i] != 0 )
       {
@@ -274,6 +353,9 @@ void DebrisData::initPersistFields()
    addField("ignoreWater",          TypeBool,                    Offset(ignoreWater,         DebrisData), "If true, this debris object will not collide with water, acting as if the water is not there.");
    endGroup("Behavior");
 
+   // disallow some field substitutions
+   onlyKeepClearSubstitutions("emitters"); // subs resolving to "~~", or "~0" are OK
+   onlyKeepClearSubstitutions("explosion");
    Parent::initPersistFields();
 }
 
@@ -304,7 +386,7 @@ void DebrisData::packData(BitStream* stream)
    stream->writeString( textureName );
    stream->writeString( shapeName );
 
-   for( int i=0; i<DDC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<DDC_NUM_EMITTERS; i++ )
    {
       if( stream->writeFlag( emitterList[i] != NULL ) )
       {
@@ -314,7 +396,7 @@ void DebrisData::packData(BitStream* stream)
 
    if( stream->writeFlag( explosion ) )
    {
-      stream->writeRangedU32(packed? SimObjectId(explosion):
+      stream->writeRangedU32(packed? SimObjectId((uintptr_t)explosion):
          explosion->getId(),DataBlockObjectIdFirst,DataBlockObjectIdLast);
    }
 
@@ -347,7 +429,7 @@ void DebrisData::unpackData(BitStream* stream)
    textureName = stream->readSTString();
    shapeName   = stream->readSTString();
 
-   for( int i=0; i<DDC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<DDC_NUM_EMITTERS; i++ )
    {
       if( stream->readFlag() )
       {
@@ -456,6 +538,8 @@ Debris::Debris()
 
    // Only allocated client side.
    mNetFlags.set( IsGhost );
+   ss_object = 0;
+   ss_index = 0;
 }
 
 Debris::~Debris()
@@ -470,6 +554,12 @@ Debris::~Debris()
    {
       delete mPart;
       mPart = NULL;
+   }
+   
+   if (mDataBlock && mDataBlock->isTempClone())
+   { 
+      delete mDataBlock;
+      mDataBlock = 0;
    }
 }
 
@@ -500,6 +590,8 @@ bool Debris::onNewDataBlock( GameBaseData *dptr, bool reload )
    if( !mDataBlock || !Parent::onNewDataBlock( dptr, reload ) )
       return false;
 
+   if (mDataBlock->isTempClone())
+      return true;
    scriptOnNewDataBlock();
    return true;
 
@@ -512,13 +604,19 @@ bool Debris::onAdd()
       return false;
    }
 
+   if( !mDataBlock )
+   {
+      Con::errorf("Debris::onAdd - Fail - No datablock");
+      return false;
+   }
+
    // create emitters
-   for( int i=0; i<DebrisData::DDC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<DebrisData::DDC_NUM_EMITTERS; i++ )
    {
       if( mDataBlock->emitterList[i] != NULL )
       {
          ParticleEmitter * pEmitter = new ParticleEmitter;
-         pEmitter->onNewDataBlock( mDataBlock->emitterList[i], false );
+         pEmitter->onNewDataBlock(mDataBlock->emitterList[i]->cloneAndPerformSubstitutions(ss_object, ss_index), false);
          if( !pEmitter->registerObject() )
          {
             Con::warnf( ConsoleLogEntry::General, "Could not register emitter for particle of class: %s", mDataBlock->getName() );
@@ -536,7 +634,8 @@ bool Debris::onAdd()
    {
       sizeList[0] = mSize * 0.5;
       sizeList[1] = mSize;
-      sizeList[2] = mSize * 1.5;
+      for (U32 i = 2; i < ParticleData::PDC_NUM_KEYS; i++)
+         sizeList[i] = mSize * 1.5;
 
       mEmitterList[0]->setSizes( sizeList );
    }
@@ -545,7 +644,8 @@ bool Debris::onAdd()
    {
       sizeList[0] = 0.0;
       sizeList[1] = mSize * 0.5;
-      sizeList[2] = mSize;
+      for (U32 i = 2; i < ParticleData::PDC_NUM_KEYS; i++)
+         sizeList[i] = mSize;
 
       mEmitterList[1]->setSizes( sizeList );
    }
@@ -632,7 +732,7 @@ bool Debris::onAdd()
 
 void Debris::onRemove()
 {
-   for( int i=0; i<DebrisData::DDC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<DebrisData::DDC_NUM_EMITTERS; i++ )
    {
       if( mEmitterList[i] )
       {
@@ -654,8 +754,7 @@ void Debris::onRemove()
       }
    }
 
-   getSceneManager()->removeObjectFromScene(this);
-   getContainer()->removeObject(this);
+   removeFromScene();
 
    Parent::onRemove();
 }
@@ -798,7 +897,8 @@ void Debris::explode()
    Point3F explosionPos = getPosition();
 
    Explosion* pExplosion = new Explosion;
-   pExplosion->onNewDataBlock(mDataBlock->explosion, false);
+   pExplosion->setSubstitutionData(ss_object, ss_index);
+   pExplosion->onNewDataBlock(mDataBlock->explosion->cloneAndPerformSubstitutions(ss_object, ss_index), false);
 
    MatrixF trans( true );
    trans.setPosition( getPosition() );
@@ -849,7 +949,7 @@ void Debris::updateEmitters( Point3F &pos, Point3F &vel, U32 ms )
 
    Point3F lastPos = mLastPos;
 
-   for( int i=0; i<DebrisData::DDC_NUM_EMITTERS; i++ )
+   for( S32 i=0; i<DebrisData::DDC_NUM_EMITTERS; i++ )
    {
       if( mEmitterList[i] )
       {

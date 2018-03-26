@@ -43,6 +43,11 @@
 // POTENTIAL TODO LIST:
 //   TODO: Clamp item alpha to fog alpha
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "T3D/fx/fxFoliageReplicator.h"
 
@@ -132,7 +137,6 @@ ConsoleDocClass( fxFoliageReplicator,
 // Trig Table Lookups.
 //
 //------------------------------------------------------------------------------
-const F32 PeriodLen = (F32) 2.0f * (F32) M_PI;
 const F32 PeriodLenMinus = (F32) (2.0f * M_PI) - 0.01f;
 
 //------------------------------------------------------------------------------
@@ -146,7 +150,7 @@ void fxFoliageRenderList::SetupClipPlanes( SceneRenderState* state, const F32 fa
    const F32 nearPlane = state->getNearPlane();
    const F32 farPlane = farClipPlane;
 
-   const Frustum& frustum = state->getFrustum();
+   const Frustum& frustum = state->getCullingFrustum();
 
    // [rene, 23-Feb-11] Why isn't this preserving the ortho state of the original frustum?
 
@@ -167,7 +171,7 @@ void fxFoliageRenderList::SetupClipPlanes( SceneRenderState* state, const F32 fa
 //------------------------------------------------------------------------------
 
 
-inline void fxFoliageRenderList::DrawQuadBox(const Box3F& QuadBox, const ColorF Colour)
+inline void fxFoliageRenderList::DrawQuadBox(const Box3F& QuadBox, const LinearColorF Colour)
 {
    // Define our debug box.
    static Point3F BoxPnts[] = {
@@ -248,7 +252,7 @@ fxFoliageCulledList::fxFoliageCulledList(Box3F SearchBox, fxFoliageCulledList* I
 
 //------------------------------------------------------------------------------
 
-void fxFoliageCulledList::FindCandidates(Box3F SearchBox, fxFoliageCulledList* InVec)
+void fxFoliageCulledList::FindCandidates(const Box3F& SearchBox, fxFoliageCulledList* InVec)
 {
    // Search the Culled List.
    for (U32 i = 0; i < InVec->GetListCount(); i++)
@@ -397,13 +401,15 @@ void fxFoliageReplicator::initPersistFields()
 
    addGroup( "Restrictions" );	// MM: Added Group Header.
       addField( "AllowOnTerrain",      TypeBool,      Offset( mFieldData.mAllowOnTerrain,       fxFoliageReplicator ), "Foliage will be placed on terrain when set." );
-      addField( "AllowOnInteriors",    TypeBool,      Offset( mFieldData.mAllowOnInteriors,     fxFoliageReplicator ), "Foliage will be placed on InteriorInstances when set." );
       addField( "AllowOnStatics",      TypeBool,      Offset( mFieldData.mAllowStatics,         fxFoliageReplicator ), "Foliage will be placed on Static shapes when set." );
       addField( "AllowOnWater",        TypeBool,      Offset( mFieldData.mAllowOnWater,         fxFoliageReplicator ), "Foliage will be placed on/under water when set." );
       addField( "AllowWaterSurface",   TypeBool,      Offset( mFieldData.mAllowWaterSurface,    fxFoliageReplicator ), "Foliage will be placed on water when set. Requires AllowOnWater." );
       addField( "AllowedTerrainSlope", TypeS32,       Offset( mFieldData.mAllowedTerrainSlope,  fxFoliageReplicator ), "Maximum surface angle allowed for foliage instances." );
    endGroup( "Restrictions" );	// MM: Added Group Footer.
 
+   addGroup( "AFX" );
+      addField( "AmbientModulationBias", TypeF32,     Offset( mFieldData.mAmbientModulationBias,fxFoliageReplicator ), "Multiplier controling amount foliage is modulated by sun's ambient." );
+   endGroup( "AFX" );
    // Initialise parents' persistent fields.
    Parent::initPersistFields();
 }
@@ -427,7 +433,7 @@ void fxFoliageReplicator::CreateFoliage(void)
    Point3F	MaxPoint(  0.5,  0.5,  0.5 );
 
    // Check Host.
-   AssertFatal(isClientObject(), "Trying to create Foliage on Server, this is bad!")
+   AssertFatal(isClientObject(), "Trying to create Foliage on Server, this is bad!");
 
       // Cannot continue without Foliage Texture!
       if (dStrlen(mFieldData.mFoliageFile) == 0) 
@@ -435,7 +441,6 @@ void fxFoliageReplicator::CreateFoliage(void)
 
    // Check that we can position somewhere!
    if (!(	mFieldData.mAllowOnTerrain ||
-      mFieldData.mAllowOnInteriors ||
       mFieldData.mAllowStatics ||
       mFieldData.mAllowOnWater))
    {
@@ -633,7 +638,6 @@ void fxFoliageReplicator::CreateFoliage(void)
 
             // Check Illegal Placements, fail if we hit a disallowed type.
             if (((CollisionType & TerrainObjectType) && !mFieldData.mAllowOnTerrain)	||
-               ((CollisionType & InteriorObjectType) && !mFieldData.mAllowOnInteriors)	||
                ((CollisionType & StaticShapeObjectType ) && !mFieldData.mAllowStatics)	||
                ((CollisionType & WaterObjectType) && !mFieldData.mAllowOnWater) ) continue;
 
@@ -1031,7 +1035,7 @@ void fxFoliageReplicator::SetupBuffers()
 
 //------------------------------------------------------------------------------
 
-Box3F fxFoliageReplicator::FetchQuadrant(Box3F Box, U32 Quadrant)
+Box3F fxFoliageReplicator::FetchQuadrant(const Box3F& Box, U32 Quadrant)
 {
    Box3F QuadrantBox;
 
@@ -1137,7 +1141,7 @@ void fxFoliageReplicator::ProcessQuadrant(fxFoliageQuadrantNode* pParentNode, fx
 void fxFoliageReplicator::SyncFoliageReplicators(void)
 {
    // Check Host.
-   AssertFatal(isServerObject(), "We *MUST* be on server when Synchronising Foliage!")
+   AssertFatal(isServerObject(), "We *MUST* be on server when Synchronising Foliage!");
 
       // Find the Replicator Set.
    SimSet *fxFoliageSet = dynamic_cast<SimSet*>(Sim::findObject("fxFoliageSet"));
@@ -1199,7 +1203,7 @@ void fxFoliageReplicator::DestroyFoliageItems()
 void fxFoliageReplicator::DestroyFoliage(void)
 {
    // Check Host.
-   AssertFatal(isClientObject(), "Trying to destroy Foliage on Server, this is bad!")
+   AssertFatal(isClientObject(), "Trying to destroy Foliage on Server, this is bad!");
 
       // Destroy Quad-tree.
       mPotentialFoliageNodes = 0;
@@ -1264,7 +1268,7 @@ bool fxFoliageReplicator::onAdd()
    {
       // Yes, so load foliage texture.
       if( mFieldData.mFoliageFile != NULL && dStrlen(mFieldData.mFoliageFile) > 0 )
-         mFieldData.mFoliageTexture = GFXTexHandle( mFieldData.mFoliageFile, &GFXDefaultStaticDiffuseProfile, avar("%s() - mFieldData.mFoliageTexture (line %d)", __FUNCTION__, __LINE__) );
+         mFieldData.mFoliageTexture = GFXTexHandle( mFieldData.mFoliageFile, &GFXStaticTextureSRGBProfile, avar("%s() - mFieldData.mFoliageTexture (line %d)", __FUNCTION__, __LINE__) );
 
       if ((GFXTextureObject*) mFieldData.mFoliageTexture == NULL)
          Con::printf("fxFoliageReplicator:  %s is an invalid or missing foliage texture file.", mFieldData.mFoliageFile);
@@ -1411,7 +1415,7 @@ void fxFoliageReplicator::computeAlphaTex()
       ColorI c((U8) (255.0f * ItemAlpha), 0, 0);
       mAlphaLookup->setColor(i, 0, c);
    }
-   mAlphaTexture.set(mAlphaLookup, &GFXDefaultStaticDiffuseProfile, false, String("fxFoliage Replicator Alpha Texture") );
+   mAlphaTexture.set(mAlphaLookup, &GFXStaticTextureSRGBProfile, false, String("fxFoliage Replicator Alpha Texture") );
 }
 
 // Renders a triangle stripped oval
@@ -1568,7 +1572,12 @@ void fxFoliageReplicator::renderObject(ObjectRenderInst *ri, SceneRenderState *s
             mFoliageShaderConsts->setSafe(mFoliageShaderGroundAlphaSC, Point4F(mFieldData.mGroundAlpha, mFieldData.mGroundAlpha, mFieldData.mGroundAlpha, mFieldData.mGroundAlpha));
 
             if (mFoliageShaderAmbientColorSC->isValid())
-               mFoliageShaderConsts->set(mFoliageShaderAmbientColorSC, state->getAmbientLightColor());
+            {
+               LinearColorF ambient = state->getAmbientLightColor();
+               LinearColorF ambient_inv(1.0f-ambient.red, 1.0f-ambient.green, 1.0f-ambient.blue, 0.0f);
+               ambient += ambient_inv*(1.0f - mFieldData.mAmbientModulationBias);
+               mFoliageShaderConsts->set(mFoliageShaderAmbientColorSC, ambient);
+            }
 
             GFX->setShaderConstBuffer(mFoliageShaderConsts);
 
@@ -1623,7 +1632,7 @@ void fxFoliageReplicator::renderQuad(fxFoliageQuadrantNode* quadNode, const Matr
       {
          // Draw the Quad Box (Debug Only).
          if (UseDebug) 
-            mFrustumRenderSet.DrawQuadBox(quadNode->QuadrantBox, ColorF(0.0f, 1.0f, 0.1f, 1.0f));
+            mFrustumRenderSet.DrawQuadBox(quadNode->QuadrantBox, LinearColorF(0.0f, 1.0f, 0.1f, 1.0f));
          if (quadNode->Level != 0) {
             for (U32 i = 0; i < 4; i++)
                renderQuad(quadNode->QuadrantChildNode[i], RenderTransform, UseDebug);
@@ -1636,7 +1645,7 @@ void fxFoliageReplicator::renderQuad(fxFoliageQuadrantNode* quadNode, const Matr
       } else {
          // Use a different color to say "I think I'm not visible!"
          if (UseDebug) 
-            mFrustumRenderSet.DrawQuadBox(quadNode->QuadrantBox, ColorF(1.0f, 0.8f, 0.1f, 1.0f));
+            mFrustumRenderSet.DrawQuadBox(quadNode->QuadrantBox, LinearColorF(1.0f, 0.8f, 0.1f, 1.0f));
       }
    }
 }
@@ -1700,7 +1709,6 @@ U32 fxFoliageReplicator::packUpdate(NetConnection * con, U32 mask, BitStream * s
       stream->write(mFieldData.mLightTime);							// Foliage Light Time.
 
       stream->writeFlag(mFieldData.mAllowOnTerrain);					// Allow on Terrain.
-      stream->writeFlag(mFieldData.mAllowOnInteriors);				// Allow on Interiors.
       stream->writeFlag(mFieldData.mAllowStatics);					// Allow on Statics.
       stream->writeFlag(mFieldData.mAllowOnWater);					// Allow on Water.
       stream->writeFlag(mFieldData.mAllowWaterSurface);				// Allow on Water Surface.
@@ -1710,6 +1718,7 @@ U32 fxFoliageReplicator::packUpdate(NetConnection * con, U32 mask, BitStream * s
       stream->writeFlag(mFieldData.mShowPlacementArea);				// Show Placement Area Flag.
       stream->write(mFieldData.mPlacementBandHeight);					// Placement Area Height.
       stream->write(mFieldData.mPlaceAreaColour);						// Placement Area Colour.
+      stream->write(mFieldData.mAmbientModulationBias);
    }
 
    // Were done ...
@@ -1777,7 +1786,6 @@ void fxFoliageReplicator::unpackUpdate(NetConnection * con, BitStream * stream)
       stream->read(&mFieldData.mLightTime);							// Foliage Light Time.
 
       mFieldData.mAllowOnTerrain = stream->readFlag();				// Allow on Terrain.
-      mFieldData.mAllowOnInteriors = stream->readFlag();				// Allow on Interiors.
       mFieldData.mAllowStatics = stream->readFlag();					// Allow on Statics.
       mFieldData.mAllowOnWater = stream->readFlag();					// Allow on Water.
       mFieldData.mAllowWaterSurface = stream->readFlag();				// Allow on Water Surface.
@@ -1788,6 +1796,7 @@ void fxFoliageReplicator::unpackUpdate(NetConnection * con, BitStream * stream)
       stream->read(&mFieldData.mPlacementBandHeight);					// Placement Area Height.
       stream->read(&mFieldData.mPlaceAreaColour);
 
+      stream->read(&mFieldData.mAmbientModulationBias);
       // Calculate Fade-In/Out Gradients.
       mFadeInGradient		= 1.0f / mFieldData.mFadeInRegion;
       mFadeOutGradient	= 1.0f / mFieldData.mFadeOutRegion;
@@ -1797,7 +1806,7 @@ void fxFoliageReplicator::unpackUpdate(NetConnection * con, BitStream * stream)
 
       // Load Foliage Texture on the client.
       if( mFieldData.mFoliageFile != NULL && dStrlen(mFieldData.mFoliageFile) > 0 )
-         mFieldData.mFoliageTexture = GFXTexHandle( mFieldData.mFoliageFile, &GFXDefaultStaticDiffuseProfile, avar("%s() - mFieldData.mFoliageTexture (line %d)", __FUNCTION__, __LINE__) );
+         mFieldData.mFoliageTexture = GFXTexHandle( mFieldData.mFoliageFile, &GFXStaticTextureSRGBProfile, avar("%s() - mFieldData.mFoliageTexture (line %d)", __FUNCTION__, __LINE__) );
 
       if ((GFXTextureObject*) mFieldData.mFoliageTexture == NULL)
          Con::printf("fxFoliageReplicator:  %s is an invalid or missing foliage texture file.", mFieldData.mFoliageFile);

@@ -47,12 +47,12 @@
 #include "lighting/lightQuery.h"
 
 
-// Collision masks are used to determin what type of objects the
+// Collision masks are used to determine what type of objects the
 // wheeled vehicle will collide with.
 static U32 sClientCollisionMask =
-      TerrainObjectType    | InteriorObjectType       |
-      PlayerObjectType     | StaticShapeObjectType    |
-      VehicleObjectType    | VehicleBlockerObjectType;
+      TerrainObjectType     | PlayerObjectType  | 
+      StaticShapeObjectType | VehicleObjectType | 
+      VehicleBlockerObjectType;
 
 // Gravity constant
 static F32 sWheeledVehicleGravity = -20;
@@ -343,7 +343,7 @@ bool WheeledVehicleData::preload(bool server, String &errorStr)
             return false;
 
       if (tireEmitter)
-         Sim::findObject(SimObjectId(tireEmitter),tireEmitter);
+         Sim::findObject(SimObjectId((uintptr_t)tireEmitter),tireEmitter);
    }
 
    // Extract wheel information from the shape
@@ -477,7 +477,7 @@ void WheeledVehicleData::packData(BitStream* stream)
    Parent::packData(stream);
 
    if (stream->writeFlag(tireEmitter))
-      stream->writeRangedU32(packed? SimObjectId(tireEmitter):
+      stream->writeRangedU32(packed? SimObjectId((uintptr_t)tireEmitter):
          tireEmitter->getId(),DataBlockObjectIdFirst,DataBlockObjectIdLast);
 
    for (S32 i = 0; i < MaxSounds; i++)
@@ -1086,6 +1086,9 @@ void WheeledVehicle::updateForces(F32 dt)
    if (mJetting)
       mRigid.force += by * mDataBlock->jetForce;
 
+   // Add in force from physical zones...
+   mRigid.force += mAppliedForce;
+
    // Container drag & buoyancy
    mRigid.force  += Point3F(0, 0, -mBuoyancy * sWheeledVehicleGravity * mRigid.mass);
    mRigid.force  -= mRigid.linVelocity * mDrag;
@@ -1232,7 +1235,7 @@ void WheeledVehicle::updateWheelParticles(F32 dt)
 
             if( material)//&& material->mShowDust )
             {
-               ColorF colorList[ ParticleData::PDC_NUM_KEYS ];
+               LinearColorF colorList[ ParticleData::PDC_NUM_KEYS ];
 
                for( U32 x = 0; x < getMin( Material::NUM_EFFECT_COLOR_STAGES, ParticleData::PDC_NUM_KEYS ); ++ x )
                   colorList[ x ] = material->mEffectColor[ x ];

@@ -80,12 +80,13 @@ public:
 
    enum
    {
-      NumTextures = 6,
+      NumTextures = 8,
    };
 
 protected:
 
    FileName mTexFilename[NumTextures];
+   bool mTexSRGB[NumTextures];
 
    GFXTexHandle mTextures[NumTextures];
 
@@ -118,6 +119,8 @@ protected:
 
    GFXShaderConstHandle *mViewportOffsetSC;
 
+   GFXShaderConstHandle *mTargetViewportSC;
+
    GFXShaderConstHandle *mFogDataSC;
    GFXShaderConstHandle *mFogColorSC;
    GFXShaderConstHandle *mEyePosSC;
@@ -127,6 +130,7 @@ protected:
    GFXShaderConstHandle *mNearFarSC;
    GFXShaderConstHandle *mInvNearFarSC;   
    GFXShaderConstHandle *mWorldToScreenScaleSC;
+   GFXShaderConstHandle *mProjectionOffsetSC;
    GFXShaderConstHandle *mWaterColorSC;
    GFXShaderConstHandle *mWaterFogDataSC;     
    GFXShaderConstHandle *mAmbientColorSC;
@@ -166,10 +170,11 @@ protected:
 
    /// The color to prefill the named target when
    /// first created by the effect.
-   ColorF mTargetClearColor;
+   LinearColorF mTargetClearColor;
 
    PFXRenderTime mRenderTime;
    PFXTargetClear mTargetClear;
+   PFXTargetViewport mTargetViewport;
 
    String mRenderBin;
 

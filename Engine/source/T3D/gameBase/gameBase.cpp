@@ -20,6 +20,11 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+// Arcane-FX for MIT Licensed Open Source version of Torque 3D from GarageGames
+// Copyright (C) 2015 Faust Logic, Inc.
+//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~//~~~~~~~~~~~~~~~~~~~~~//
+
 #include "platform/platform.h"
 #include "T3D/gameBase/gameBase.h"
 #include "console/consoleTypes.h"
@@ -36,6 +41,9 @@
 #include "T3D/aiConnection.h"
 #endif
 
+#ifdef TORQUE_AFX_ENABLED
+#include "afx/arcaneFX.h"
+#endif
 //----------------------------------------------------------------------------
 // Ghost update relative priority values
 
@@ -97,14 +105,14 @@ IMPLEMENT_CALLBACK( GameBaseData, onRemove, void, ( GameBase* obj ), ( obj ),
    "@param obj the GameBase object\n\n"
    "@see onAdd for an example\n" );
 
-IMPLEMENT_CALLBACK( GameBaseData, onMount, void, ( GameBase* obj, SceneObject* mountObj, S32 node ), ( obj, mountObj, node ),
+IMPLEMENT_CALLBACK( GameBaseData, onMount, void, ( SceneObject* obj, SceneObject* mountObj, S32 node ), ( obj, mountObj, node ),
    "@brief Called when the object is mounted to another object in the scene.\n\n"
    "@param obj the GameBase object being mounted\n"
    "@param mountObj the object we are mounted to\n"
    "@param node the mountObj node we are mounted to\n\n"
    "@see onAdd for an example\n" );
 
-IMPLEMENT_CALLBACK( GameBaseData, onUnmount, void, ( GameBase* obj, SceneObject* mountObj, S32 node ), ( obj, mountObj, node ),
+IMPLEMENT_CALLBACK( GameBaseData, onUnmount, void, ( SceneObject* obj, SceneObject* mountObj, S32 node ), ( obj, mountObj, node ),
    "@brief Called when the object is unmounted from another object in the scene.\n\n"
    "@param obj the GameBase object being unmounted\n"
    "@param mountObj the object we are unmounted from\n"
@@ -121,6 +129,12 @@ GameBaseData::GameBaseData()
 {
    category = "";
    packed = false;
+}
+GameBaseData::GameBaseData(const GameBaseData& other, bool temp_clone) : SimDataBlock(other, temp_clone)
+{
+   packed = other.packed;
+   category = other.category;
+   //mReloadSignal = other.mReloadSignal; // DO NOT copy the mReloadSignal member. 
 }
 
 void GameBaseData::inspectPostApply()
@@ -244,6 +258,10 @@ GameBase::GameBase()
 
 GameBase::~GameBase()
 {
+#ifdef TORQUE_AFX_ENABLED
+   if (scope_registered)
+      arcaneFX::unregisterScopedObject(this);
+#endif
 }
 
 
@@ -256,8 +274,21 @@ bool GameBase::onAdd()
 
    // Datablock must be initialized on the server.
    // Client datablock are initialized by the initial update.
+#ifdef TORQUE_AFX_ENABLED
+   if (isClientObject())
+   {
+      if (scope_id > 0 && !scope_registered)
+         arcaneFX::registerScopedObject(this);
+   }
+   else
+   {
+      if ( mDataBlock && !onNewDataBlock( mDataBlock, false ) )
+         return false;
+   }
+#else
    if ( isServerObject() && mDataBlock && !onNewDataBlock( mDataBlock, false ) )
       return false;
+#endif
 
    setProcessTick( true );
 
@@ -266,6 +297,10 @@ bool GameBase::onAdd()
 
 void GameBase::onRemove()
 {
+#ifdef TORQUE_AFX_ENABLED
+   if (scope_registered)
+      arcaneFX::unregisterScopedObject(this);
+#endif
    // EDITOR FEATURE: Remove us from the reload signal of our datablock.
    if ( mDataBlock )
       mDataBlock->mReloadSignal.remove( this, &GameBase::_onDatablockModified );
@@ -290,6 +325,11 @@ bool GameBase::onNewDataBlock( GameBaseData *dptr, bool reload )
 
    if ( !mDataBlock )
       return false;
+#ifdef TORQUE_AFX_ENABLED
+   // Don't set mask when new datablock is a temp-clone.
+   if (mDataBlock->isTempClone())
+      return true;
+#endif
 
    setMaskBits(DataBlockMask);
    return true;
@@ -388,7 +428,9 @@ F32 GameBase::getUpdatePriority(CameraScopeQuery *camInfo, U32 updateMask, S32 u
    // Weight by field of view, objects directly in front
    // will be weighted 1, objects behind will be 0
    F32 dot = mDot(pos,camInfo->orientation);
-   bool inFov = dot > camInfo->cosFov;
+
+   bool inFov = dot > camInfo->cosFov * 1.5f;
+
    F32 wFov = inFov? 1.0f: 0;
 
    // Weight by linear velocity parallel to the viewing plane
@@ -406,7 +448,7 @@ F32 GameBase::getUpdatePriority(CameraScopeQuery *camInfo, U32 updateMask, S32 u
 
    // Weight by interest.
    F32 wInterest;
-   if (getTypeMask() & PlayerObjectType)
+   if (getTypeMask() & (PlayerObjectType || VehicleObjectType ))
       wInterest = 0.75f;
    else if (getTypeMask() & ProjectileObjectType)
    {
@@ -541,6 +583,13 @@ U32 GameBase::packUpdate( NetConnection *connection, U32 mask, BitStream *stream
    stream->writeFlag(mIsAiControlled);
 #endif
 
+#ifdef TORQUE_AFX_ENABLED
+   if (stream->writeFlag(mask & ScopeIdMask))
+   {
+      if (stream->writeFlag(scope_refs > 0))
+         stream->writeInt(scope_id, SCOPE_ID_BITS);
+   }
+#endif
    return retMask;
 }
 
@@ -579,6 +628,13 @@ void GameBase::unpackUpdate(NetConnection *con, BitStream *stream)
    mTicksSinceLastMove = 0;
    mIsAiControlled = stream->readFlag();
 #endif
+#ifdef TORQUE_AFX_ENABLED
+   if (stream->readFlag())
+   {
+      scope_id = (stream->readFlag()) ? (U16) stream->readInt(SCOPE_ID_BITS) : 0;
+      scope_refs = 0;
+   }
+#endif
 }
 
 void GameBase::onMount( SceneObject *obj, S32 node )
@@ -588,7 +644,7 @@ void GameBase::onMount( SceneObject *obj, S32 node )
    // Are we mounting to a GameBase object?
    GameBase *gbaseObj = dynamic_cast<GameBase*>( obj );
 
-   if ( gbaseObj && gbaseObj->getControlObject() != this )
+   if ( gbaseObj && gbaseObj->getControlObject() != this && gbaseObj->getControllingObject() != this)
       processAfter( gbaseObj );
 
    if (!isGhost()) {
@@ -614,7 +670,7 @@ void GameBase::onUnmount( SceneObject *obj, S32 node )
 
 bool GameBase::setDataBlockProperty( void *obj, const char *index, const char *db)
 {
-   if( db == NULL || !db || !db[ 0 ] )
+   if( db == NULL || !db[ 0 ] )
    {
       Con::errorf( "GameBase::setDataBlockProperty - Can't unset datablock on GameBase objects" );
       return false;

@@ -60,28 +60,19 @@ public:
    // Force creation of cubemap
    void createMap();   
 
-   // Update a dynamic cubemap @ pos
-   void updateDynamic(SceneManager* sm, const Point3F& pos);
+   // Update a static cubemap @ pos
 	void updateFaces();
-   
-   // Dynamic cube map support
-   bool mDynamic;
-   U32 mDynamicSize;   
-   F32 mDynamicNearDist;
-   F32 mDynamicFarDist;
-   U32 mDynamicObjectTypeMask;
+
+   void setCubeFaceFile(U32 index, FileName newFaceFile);
+   GFXTexHandle* getCubeMapFace(U32 faceIdx) { return &mCubeFace[faceIdx]; }
 
 protected:
-
+   FileName mCubeMapFile;
    FileName mCubeFaceFile[6];
    GFXTexHandle mCubeFace[6];
 
    GFXTexHandle mDepthBuff;
    GFXTextureTargetRef mRenderTarget;
-#ifdef INIT_HACK
-   bool mInit;
-#endif
 };
 
 #endif // CUBEMAPDATA
-

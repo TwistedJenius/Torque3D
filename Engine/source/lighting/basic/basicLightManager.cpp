@@ -39,17 +39,15 @@
 #include "materials/materialFeatureTypes.h"
 #include "math/util/frustum.h"
 #include "scene/sceneObject.h"
-#include "renderInstance/renderPrePassMgr.h"
+#include "renderInstance/renderDeferredMgr.h"
 #include "shaderGen/featureMgr.h"
 #include "shaderGen/HLSL/shaderFeatureHLSL.h"
 #include "shaderGen/HLSL/bumpHLSL.h"
 #include "shaderGen/HLSL/pixSpecularHLSL.h"
-#include "lighting/basic/blInteriorSystem.h"
 #include "lighting/basic/blTerrainSystem.h"
 #include "lighting/common/projectedShadow.h"
 
-
-#ifdef TORQUE_OS_MAC
+#if defined( TORQUE_OPENGL )
 #include "shaderGen/GLSL/shaderFeatureGLSL.h"
 #include "shaderGen/GLSL/bumpGLSL.h"
 #include "shaderGen/GLSL/pixSpecularGLSL.h"
@@ -95,10 +93,8 @@ BasicLightManager::BasicLightManager()
 {
    mTimer = PlatformTimer::create();
    
-   mInteriorSystem = new blInteriorSystem;
    mTerrainSystem = new blTerrainSystem;
    
-   getSceneLightingInterface()->registerSystem( mInteriorSystem );
    getSceneLightingInterface()->registerSystem( mTerrainSystem );
 
    Con::addVariable( "$BasicLightManagerStats::activePlugins", 
@@ -152,7 +148,6 @@ BasicLightManager::~BasicLightManager()
       SAFE_DELETE( mTimer );
 
    SAFE_DELETE( mTerrainSystem );
-   SAFE_DELETE( mInteriorSystem );
 }
 
 bool BasicLightManager::isCompatible() const
@@ -167,7 +162,7 @@ void BasicLightManager::activate( SceneManager *sceneManager )
 
    if( GFX->getAdapterType() == OpenGL )
    {
-      #ifdef TORQUE_OS_MAC
+      #if defined( TORQUE_OPENGL ) 
          FEATUREMGR->registerFeature( MFT_LightMap, new LightmapFeatGLSL );
          FEATUREMGR->registerFeature( MFT_ToneMap, new TonemapFeatGLSL );
          FEATUREMGR->registerFeature( MFT_NormalMap, new BumpFeatGLSL );
@@ -177,7 +172,7 @@ void BasicLightManager::activate( SceneManager *sceneManager )
    }
    else
    {
-      #ifndef TORQUE_OS_MAC
+      #if defined( TORQUE_OS_WIN )
          FEATUREMGR->registerFeature( MFT_LightMap, new LightmapFeatHLSL );
          FEATUREMGR->registerFeature( MFT_ToneMap, new TonemapFeatHLSL );
          FEATUREMGR->registerFeature( MFT_NormalMap, new BumpFeatHLSL );
@@ -189,13 +184,13 @@ void BasicLightManager::activate( SceneManager *sceneManager )
    FEATUREMGR->unregisterFeature( MFT_MinnaertShading );
    FEATUREMGR->unregisterFeature( MFT_SubSurface );
 
-   // First look for the prepass bin...
-   RenderPrePassMgr *prePassBin = _findPrePassRenderBin();
+   // First look for the deferred bin...
+   RenderDeferredMgr *deferredBin = _findDeferredRenderBin();
 
    /*
    // If you would like to use forward shading, and have a linear depth pre-pass
    // than un-comment this code block.
-   if ( !prePassBin )
+   if ( !deferredBin )
    {
       Vector<GFXFormat> formats;
       formats.push_back( GFXFormatR32F );
@@ -209,19 +204,19 @@ void BasicLightManager::activate( SceneManager *sceneManager )
       // Uncomment this for a no-color-write z-fill pass. 
       //linearDepthFormat = GFXFormat_COUNT;
 
-      prePassBin = new RenderPrePassMgr( linearDepthFormat != GFXFormat_COUNT, linearDepthFormat );
-      prePassBin->registerObject();
-      rpm->addManager( prePassBin );
+      deferredBin = new RenderDeferredMgr( linearDepthFormat != GFXFormat_COUNT, linearDepthFormat );
+      deferredBin->registerObject();
+      rpm->addManager( deferredBin );
    }
    */
-   mPrePassRenderBin = prePassBin;
+   mDeferredRenderBin = deferredBin;
 
-   // If there is a prepass bin
-   MATMGR->setPrePassEnabled( mPrePassRenderBin.isValid() );
-   sceneManager->setPostEffectFog( mPrePassRenderBin.isValid() && mPrePassRenderBin->getTargetChainLength() > 0  );
+   // If there is a deferred bin
+   MATMGR->setDeferredEnabled( mDeferredRenderBin.isValid() );
+   sceneManager->setPostEffectFog( mDeferredRenderBin.isValid() && mDeferredRenderBin->getTargetChainLength() > 0  );
 
-   // Tell the material manager that we don't use prepass.
-   MATMGR->setPrePassEnabled( false );
+   // Tell the material manager that we don't use deferred.
+   MATMGR->setDeferredEnabled( false );
 
    GFXShader::addGlobalMacro( "TORQUE_BASIC_LIGHTING" );
 
@@ -246,9 +241,9 @@ void BasicLightManager::deactivate()
    }
    mConstantLookup.clear();
 
-   if ( mPrePassRenderBin )
-      mPrePassRenderBin->deleteObject();
-   mPrePassRenderBin = NULL;
+   if ( mDeferredRenderBin )
+      mDeferredRenderBin->deleteObject();
+   mDeferredRenderBin = NULL;
 
    GFXShader::removeGlobalMacro( "TORQUE_BASIC_LIGHTING" );
 

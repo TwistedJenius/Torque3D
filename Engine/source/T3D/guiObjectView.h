@@ -88,6 +88,7 @@ class GuiObjectView : public GuiTSCtrl
       
       F32 mMaxOrbitDist;
       F32 mMinOrbitDist;
+      EulerF mCameraRotation;
       
       ///
       F32 mOrbitDist;
@@ -144,10 +145,10 @@ class GuiObjectView : public GuiTSCtrl
       LightInfo* mLight;
       
       ///
-      ColorF mLightColor;
+      LinearColorF mLightColor;
       
       ///
-      ColorF mLightAmbient;
+      LinearColorF mLightAmbient;
       
       ///
       Point3F mLightDirection;
@@ -245,16 +246,19 @@ class GuiObjectView : public GuiTSCtrl
       /// @param distance The distance to set the orbit to (will be clamped).
       void setOrbitDistance( F32 distance );
       
+      /// Sets the angle of the camera on it's orbit in relation to the object.
+      void setCameraRotation( const EulerF& rotation );
+      
       /// @}
       
       /// @name Lighting
       /// @{
       
       ///
-      void setLightColor( const ColorF& color );
+      void setLightColor( const LinearColorF& color );
       
       ///
-      void setLightAmbient( const ColorF& color );
+      void setLightAmbient( const LinearColorF& color );
       
       ///
       void setLightDirection( const Point3F& direction );

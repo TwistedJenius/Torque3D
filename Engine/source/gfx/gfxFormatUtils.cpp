@@ -67,11 +67,11 @@ GFXFormatInfo::Data GFXFormatInfo::smFormatInfos[ GFXFormat_COUNT ] =
    GFXFormatInfo::Data( 16,   true,  false, true  ),  // GFXFormatR32G32B32A32F
 
    // Compressed formats...
-   GFXFormatInfo::Data( 0,    false, true,  false ),   // GFXFormatDXT1
-   GFXFormatInfo::Data( 0,    true,  true,  false ),   // GFXFormatDXT2
-   GFXFormatInfo::Data( 0,    true,  true,  false ),   // GFXFormatDXT3
-   GFXFormatInfo::Data( 0,    true,  true,  false ),   // GFXFormatDXT4
-   GFXFormatInfo::Data( 0,    true,  true,  false ),   // GFXFormatDXT5
+   GFXFormatInfo::Data( 0,    false, true,  false ),   // GFXFormatBC1
+   GFXFormatInfo::Data( 0,    true,  true,  false ),   // GFXFormatBC2
+   GFXFormatInfo::Data( 0,    true,  true,  false ),   // GFXFormatBC3
+   GFXFormatInfo::Data( 0,    false, true,  false ),   // GFXFormatBC4
+   GFXFormatInfo::Data( 0,    false, true,  false ),   // GFXFormatBC5
 };
 
 //-----------------------------------------------------------------------------
@@ -81,7 +81,7 @@ void GFXCopyPixels(  GFXFormat fromFormat, U32 fromWidth, U32 fromHeight, U8* fr
 {
    if( fromFormat == toFormat
        && fromWidth == toWidth
-       && fromHeight == fromHeight )
+       && fromHeight == toHeight )
       dMemcpy( toData, fromData, fromWidth * fromHeight * GFXFormatInfo( fromFormat ).getBytesPerPixel() );
    else
    {

@@ -200,6 +200,18 @@ inline F32 mFmod(const F32 val, const F32 mod)
    return fmod(val, mod);
 }
 
+inline S32 mRound(const F32 val)  
+{  
+   return (S32)floor(val + 0.5f);  
+}  
+      
+inline F32 mRound(const F32 val, const S32 n)  
+{  
+   S32 place = (S32) pow(10.0f, n);  
+      
+   return mFloor((val*place)+0.5)/place;  
+}  
+
 inline S32 mAbs(const S32 val)
 {
    return abs(val);
@@ -223,6 +235,19 @@ inline U32 mClampU(U32 val, U32 low, U32 high)
 inline F32 mClampF(F32 val, F32 low, F32 high)
 {
    return (F32) getMax(getMin(val, high), low);
+}
+
+inline S32 mWrap(S32 val, S32 low, S32 high)
+{
+	int len = high - low;
+	return low + (val >= 0 ? val % len : -val % len ? len - (-val % len) : 0);
+
+}
+
+inline F32 mWrapF(F32 val, F32 low, F32 high)
+{
+	F32 t = fmod(val - low, high - low);
+	return t < 0 ? t + high : t + low;
 }
 
 /// Template function for doing a linear interpolation between any two
@@ -308,6 +333,11 @@ inline F32 mLog(const F32 val)
    return (F32) log(val);
 }
 
+inline F32 mLog2(const F32 val)
+{
+   return (F32) log2(val);
+}
+
 inline F32 mExp(const F32 val)
 {
    return (F32) exp(val);
@@ -368,6 +398,10 @@ inline F64 mLog(const F64 val)
    return (F64) log(val);
 }
 
+inline F64 mLog2(const F64 val)
+{
+   return (F64) log2(val);
+}
 
 inline F32 mCatmullrom(F32 t, F32 p0, F32 p1, F32 p2, F32 p3)
 {
@@ -442,7 +476,7 @@ inline bool mIsNaN_F( const F32 x )
 
 inline bool mIsInf_F( const F32 x )
 {
-   return ( x == std::numeric_limits< float >::infinity() );
+   return ( x == std::numeric_limits< F32 >::infinity() );
 }
 
 inline F32 mSign( const F32 n )

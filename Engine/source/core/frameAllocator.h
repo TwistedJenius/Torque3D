@@ -185,7 +185,7 @@ public:
 /// the FrameAllocator. For example:
 /// @code
 /// FrameTemp<char> tempStr(32); // NOTE! This parameter is NOT THE SIZE IN BYTES. See constructor docs.
-/// dStrcat( tempStr, SomeOtherString );
+/// dStrcat( tempStr, SomeOtherString, 32 * sizeof(char) );
 /// tempStr[2] = 'l';
 /// Con::printf( tempStr );
 /// Con::printf( "Foo: %s", ~tempStr );
@@ -234,7 +234,7 @@ public:
       mWaterMark = FrameAllocator::getWaterMark();
       mMemory = reinterpret_cast<T *>( FrameAllocator::alloc( sizeof( T ) * count ) );
 
-      for( int i = 0; i < mNumObjectsInMemory; i++ )
+      for( S32 i = 0; i < mNumObjectsInMemory; i++ )
          constructInPlace<T>( &mMemory[i] );
    }
 
@@ -242,7 +242,7 @@ public:
    ~FrameTemp()
    {
       // Call destructor
-      for( int i = 0; i < mNumObjectsInMemory; i++ )
+      for( S32 i = 0; i < mNumObjectsInMemory; i++ )
          destructInPlace<T>( &mMemory[i] );
 
       FrameAllocator::setWaterMark( mWaterMark );

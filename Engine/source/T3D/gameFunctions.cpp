@@ -32,7 +32,9 @@
 #include "math/mEase.h"
 #include "core/module.h"
 #include "console/engineAPI.h"
-
+#include "platform/output/IDisplayDevice.h"
+#include "postFx/postEffectManager.h"
+#include "gfx/gfxTransformSaver.h"
 
 static void RegisterGameFunctions();
 static void Process3D();
@@ -82,11 +84,13 @@ static S32 gEaseBack = Ease::Back;
 static S32 gEaseBounce = Ease::Bounce;	
 
 
+extern bool gEditingMission;
+
 extern void ShowInit();
 
 //------------------------------------------------------------------------------
 /// Camera and FOV info
-namespace {
+namespace CameraAndFOV{
 
    const  U32 MaxZoomSpeed             = 2000;     ///< max number of ms to reach target FOV
 
@@ -110,7 +114,7 @@ static U32 sgServerQueryIndex = 0;
 //SERVER FUNCTIONS ONLY
 ConsoleFunctionGroupBegin( Containers, "Spatial query functions. <b>Server side only!</b>");
 
-ConsoleFunction(containerFindFirst, const char*, 6, 6, "(int mask, Point3F point, float x, float y, float z)"
+DefineConsoleFunction( containerFindFirst, const char*, (U32 typeMask, Point3F origin, Point3F size), , "(int mask, Point3F point, float x, float y, float z)"
    "@brief Find objects matching the bitmask type within a box centered at point, with extents x, y, z.\n\n"
    "@returns The first object found, or an empty string if nothing was found.  Thereafter, you can get more "
    "results using containerFindNext()."
@@ -118,17 +122,6 @@ ConsoleFunction(containerFindFirst, const char*, 6, 6, "(int mask, Point3F point
    "@ingroup Game")
 {
    //find out what we're looking for
-   U32 typeMask = U32(dAtoi(argv[1]));
-
-   //find the center of the container volume
-   Point3F origin(0.0f, 0.0f, 0.0f);
-   dSscanf(argv[2], "%g %g %g", &origin.x, &origin.y, &origin.z);
-
-   //find the box dimensions
-   Point3F size(0.0f, 0.0f, 0.0f);
-   size.x = mFabs(dAtof(argv[3]));
-   size.y = mFabs(dAtof(argv[4]));
-   size.z = mFabs(dAtof(argv[5]));
 
    //build the container volume
    Box3F queryBox;
@@ -143,16 +136,17 @@ ConsoleFunction(containerFindFirst, const char*, 6, 6, "(int mask, Point3F point
 
    //return the first element
    sgServerQueryIndex = 0;
-   char *buff = Con::getReturnBuffer(100);
+   static const U32 bufSize = 100;
+   char *buff = Con::getReturnBuffer(bufSize);
    if (sgServerQueryList.mList.size())
-      dSprintf(buff, 100, "%d", sgServerQueryList.mList[sgServerQueryIndex++]->getId());
+      dSprintf(buff, bufSize, "%d", sgServerQueryList.mList[sgServerQueryIndex++]->getId());
    else
       buff[0] = '\0';
 
    return buff;
 }
 
-ConsoleFunction( containerFindNext, const char*, 1, 1, "()"
+DefineConsoleFunction( containerFindNext, const char*, (), , "()"
    "@brief Get more results from a previous call to containerFindFirst().\n\n"
    "@note You must call containerFindFirst() to begin the search.\n"
    "@returns The next object found, or an empty string if nothing else was found.\n"
@@ -160,9 +154,10 @@ ConsoleFunction( containerFindNext, const char*, 1, 1, "()"
 	"@ingroup Game")
 {
    //return the next element
-   char *buff = Con::getReturnBuffer(100);
+   static const U32 bufSize = 100;
+   char *buff = Con::getReturnBuffer(bufSize);
    if (sgServerQueryIndex < sgServerQueryList.mList.size())
-      dSprintf(buff, 100, "%d", sgServerQueryList.mList[sgServerQueryIndex++]->getId());
+      dSprintf(buff, bufSize, "%d", sgServerQueryList.mList[sgServerQueryIndex++]->getId());
    else
       buff[0] = '\0';
 
@@ -187,9 +182,9 @@ DefineEngineFunction( setDefaultFov, void, ( F32 defaultFOV ),,
             "@param defaultFOV The default field of view in degrees\n"
 				"@ingroup CameraSystem")
 {
-   sDefaultFov = mClampF(defaultFOV, MinCameraFov, MaxCameraFov);
-   if(sCameraFov == sTargetFov)
-      sTargetFov = sDefaultFov;
+   CameraAndFOV::sDefaultFov = mClampF(defaultFOV, MinCameraFov, MaxCameraFov);
+   if(CameraAndFOV::sCameraFov == CameraAndFOV::sTargetFov)
+      CameraAndFOV::sTargetFov = CameraAndFOV::sDefaultFov;
 }
 
 DefineEngineFunction( setZoomSpeed, void, ( S32 speed ),,
@@ -199,7 +194,7 @@ DefineEngineFunction( setZoomSpeed, void, ( S32 speed ),,
             "@param speed The camera's zoom speed in ms per 90deg FOV change\n"
 				"@ingroup CameraSystem")
 {
-   sZoomSpeed = mClamp(speed, 0, MaxZoomSpeed);
+   CameraAndFOV::sZoomSpeed = mClamp(speed, 0, CameraAndFOV::MaxZoomSpeed);
 }
 
 DefineEngineFunction( setFov, void, ( F32 FOV ),,
@@ -207,22 +202,22 @@ DefineEngineFunction( setFov, void, ( F32 FOV ),,
             "@param FOV The camera's new FOV in degrees\n"
 				"@ingroup CameraSystem")
 {
-   sTargetFov = mClampF(FOV, MinCameraFov, MaxCameraFov);
+   CameraAndFOV::sTargetFov = mClampF(FOV, MinCameraFov, MaxCameraFov);
 }
 
 F32 GameGetCameraFov()
 {
-   return(sCameraFov);
+   return(CameraAndFOV::sCameraFov);
 }
 
 void GameSetCameraFov(F32 fov)
 {
-   sTargetFov = sCameraFov = fov;
+   CameraAndFOV::sTargetFov = CameraAndFOV::sCameraFov = fov;
 }
 
 void GameSetCameraTargetFov(F32 fov)
 {
-   sTargetFov = fov;
+   CameraAndFOV::sTargetFov = fov;
 }
 
 void GameUpdateCameraFov()
@@ -230,29 +225,29 @@ void GameUpdateCameraFov()
    F32 time = F32(Platform::getVirtualMilliseconds());
 
    // need to update fov?
-   if(sTargetFov != sCameraFov)
+   if(CameraAndFOV::sTargetFov != CameraAndFOV::sCameraFov)
    {
-      F32 delta = time - sLastCameraUpdateTime;
+      F32 delta = time - CameraAndFOV::sLastCameraUpdateTime;
 
       // snap zoom?
-      if((sZoomSpeed == 0) || (delta <= 0.f))
-         sCameraFov = sTargetFov;
+      if((CameraAndFOV::sZoomSpeed == 0) || (delta <= 0.0f))
+         CameraAndFOV::sCameraFov = CameraAndFOV::sTargetFov;
       else
       {
          // gZoomSpeed is time in ms to zoom 90deg
-         F32 step = 90.f * (delta / F32(sZoomSpeed));
+         F32 step = 90.f * (delta / F32(CameraAndFOV::sZoomSpeed));
 
-         if(sCameraFov > sTargetFov)
+         if(CameraAndFOV::sCameraFov > CameraAndFOV::sTargetFov)
          {
-            sCameraFov -= step;
-            if(sCameraFov < sTargetFov)
-               sCameraFov = sTargetFov;
+            CameraAndFOV::sCameraFov -= step;
+            if(CameraAndFOV::sCameraFov < CameraAndFOV::sTargetFov)
+               CameraAndFOV::sCameraFov = CameraAndFOV::sTargetFov;
          }
          else
          {
-            sCameraFov += step;
-            if(sCameraFov > sTargetFov)
-               sCameraFov = sTargetFov;
+            CameraAndFOV::sCameraFov += step;
+            if(CameraAndFOV::sCameraFov > CameraAndFOV::sTargetFov)
+               CameraAndFOV::sCameraFov = CameraAndFOV::sTargetFov;
          }
       }
    }
@@ -262,23 +257,23 @@ void GameUpdateCameraFov()
    if(connection)
    {
       // check if fov is valid on control object
-      if(connection->isValidControlCameraFov(sCameraFov))
-         connection->setControlCameraFov(sCameraFov);
+      if(connection->isValidControlCameraFov(CameraAndFOV::sCameraFov))
+         connection->setControlCameraFov(CameraAndFOV::sCameraFov);
       else
       {
          // will set to the closest fov (fails only on invalid control object)
-         if(connection->setControlCameraFov(sCameraFov))
+         if(connection->setControlCameraFov(CameraAndFOV::sCameraFov))
          {
-            F32 setFov = sCameraFov;
+            F32 setFov = CameraAndFOV::sCameraFov;
             connection->getControlCameraFov(&setFov);
-            sTargetFov = sCameraFov = setFov;
+            CameraAndFOV::sTargetFov =CameraAndFOV::sCameraFov = setFov;
          }
       }
    }
 
    // update the console variable
-   sConsoleCameraFov = sCameraFov;
-   sLastCameraUpdateTime = time;
+   CameraAndFOV::sConsoleCameraFov = CameraAndFOV::sCameraFov;
+   CameraAndFOV::sLastCameraUpdateTime = time;
 }
 //--------------------------------------------------------------------------
 
@@ -346,17 +341,76 @@ bool GameProcessCameraQuery(CameraQuery *query)
 
    if (connection && connection->getControlCameraTransform(0.032f, &query->cameraMatrix))
    {
-      query->object = dynamic_cast<ShapeBase*>(connection->getControlObject());
+      query->object = dynamic_cast<GameBase*>(connection->getCameraObject());
       query->nearPlane = gClientSceneGraph->getNearClip();
 
       // Scale the normal visible distance by the performance 
       // tuning scale which we never let over 1.
-      sVisDistanceScale = mClampF( sVisDistanceScale, 0.01f, 1.0f );
-      query->farPlane = gClientSceneGraph->getVisibleDistance() * sVisDistanceScale;
+      CameraAndFOV::sVisDistanceScale = mClampF( CameraAndFOV::sVisDistanceScale, 0.01f, 1.0f );
+      query->farPlane = gClientSceneGraph->getVisibleDistance() * CameraAndFOV::sVisDistanceScale;
 
-      F32 cameraFov;
+      // Provide some default values
+      query->stereoTargets[0] = 0;
+      query->stereoTargets[1] = 0;
+      query->eyeOffset[0] = Point3F::Zero;
+      query->eyeOffset[1] = Point3F::Zero;
+      query->hasFovPort = false;
+      query->hasStereoTargets = false;
+      query->displayDevice = NULL;
+      
+      F32 cameraFov = 0.0f;
+      bool fovSet = false;
+
+      // Try to use the connection's display deivce, if any, but only if the editor
+      // is not open
+      if(!gEditingMission && connection->hasDisplayDevice())
+      {
+         IDisplayDevice* display = connection->getDisplayDevice();
+
+         query->displayDevice = display;
+
+         // Note: all eye values are invalid until this is called
+         display->setDrawCanvas(query->drawCanvas);
+
+         display->setCurrentConnection(connection);
+
+         // Display may activate AFTER so we need to call this again just in case
+         display->onStartFrame();
+
+         // The connection's display device may want to set the eye offset
+         if(display->providesEyeOffsets())
+         {
+            display->getEyeOffsets(query->eyeOffset);
+         }
+
+         // Grab field of view for both eyes
+         if (display->providesFovPorts())
+         {
+            display->getFovPorts(query->fovPort);
+            fovSet = true;
+            query->hasFovPort = true;
+         }
+         
+         // Grab the latest overriding render view transforms
+         connection->getControlCameraEyeTransforms(display, query->eyeTransforms);
+         connection->getControlCameraHeadTransform(display, &query->headMatrix);
+
+         display->getStereoViewports(query->stereoViewports);
+         display->getStereoTargets(query->stereoTargets);
+         query->hasStereoTargets = true;
+      }
+      else
+      {
+         query->eyeTransforms[0] = query->cameraMatrix;
+         query->eyeTransforms[1] = query->cameraMatrix;
+         query->headMatrix = query->cameraMatrix;
+      }
+
+      // Use the connection's FOV settings if requried
       if(!connection->getControlCameraFov(&cameraFov))
+      {
          return false;
+      }
 
       query->fov = mDegToRad(cameraFov);
       return true;
@@ -380,7 +434,197 @@ void GameRenderWorld()
    PROFILE_END();
 }
 
+//================================================================================================
+//Render a full frame from a given transform and frustum, and render out to a target
+//================================================================================================
+void renderFrame(GFXTextureTargetRef* target, MatrixF transform, Frustum frustum, U32 typeMask, ColorI canvasClearColor)
+{
+   if (!GFX->allowRender() || GFX->canCurrentlyRender())
+      return;
 
+   PROFILE_START(GameFunctions_RenderFrame);
+
+   GFX->setActiveRenderTarget(*target);
+   if (!GFX->getActiveRenderTarget())
+      return;
+
+   GFXTarget* renderTarget = GFX->getActiveRenderTarget();
+   if (renderTarget == NULL)
+      return;
+
+   // Make sure the root control is the size of the canvas.
+   Point2I size = renderTarget->getSize();
+   if (size.x == 0 || size.y == 0)
+      return;
+
+   //Now, getting to the meat of it!
+#ifdef TORQUE_GFX_STATE_DEBUG
+   GFX->getDebugStateManager()->startFrame();
+#endif
+   RectI targetRect(0, 0, size.x, size.y);
+
+   // Signal the interested parties.
+   GuiCanvas::getGuiCanvasFrameSignal().trigger(true);
+
+   GFXTransformSaver saver;
+
+   // Gross hack to make sure we don't end up with advanced lighting and msaa 
+   // at the same time, which causes artifacts. At the same time we don't 
+   // want to just throw the settings the user has chosen if the light manager 
+   // changes at a later time.
+   /*GFXVideoMode mode = mPlatformWindow->getVideoMode();
+   if (dStricmp(LIGHTMGR->getId(), "ADVLM") == 0 && mode.antialiasLevel > 0)
+   {
+      const char *pref = Con::getVariable("$pref::Video::mode");
+      mode.parseFromString(pref);
+      mode.antialiasLevel = 0;
+      mPlatformWindow->setVideoMode(mode);
+
+      Con::printf("AntiAliasing has been disabled; it is not compatible with AdvancedLighting.");
+   }
+   else if (dStricmp(LIGHTMGR->getId(), "BLM") == 0)
+   {
+      const char *pref = Con::getVariable("$pref::Video::mode");
+
+      U32 prefAA = dAtoi(StringUnit::getUnit(pref, 5, " "));
+      if (prefAA != mode.antialiasLevel)
+      {
+         mode.parseFromString(pref);
+         mPlatformWindow->setVideoMode(mode);
+
+         Con::printf("AntiAliasing has been enabled while running BasicLighting.");
+      }
+   }*/
+
+   // Begin GFX
+   PROFILE_START(GameFunctions_RenderFrame_GFXBeginScene);
+   bool beginSceneRes = GFX->beginScene();
+   PROFILE_END();
+
+   PROFILE_START(GameFunctions_RenderFrame_OffscreenCanvases);
+
+   // Render all offscreen canvas objects here since we may need them in the render loop
+   if (GuiOffscreenCanvas::sList.size() != 0)
+   {
+      // Reset the entire state since oculus shit will have barfed it.
+      GFX->updateStates(true);
+
+      for (Vector<GuiOffscreenCanvas*>::iterator itr = GuiOffscreenCanvas::sList.begin(); itr != GuiOffscreenCanvas::sList.end(); itr++)
+      {
+         (*itr)->renderFrame(false, false);
+      }
+
+      GFX->setActiveRenderTarget(renderTarget);
+   }
+
+   PROFILE_END();
+
+   // Can't render if waiting for device to reset.   
+   if (!beginSceneRes)
+   {
+      // Since we already triggered the signal once for begin-of-frame,
+      // we should be consistent and trigger it again for end-of-frame.
+      GuiCanvas::getGuiCanvasFrameSignal().trigger(false);
+
+      return;
+   }
+
+   // Clear the current viewport area
+   GFX->setViewport(targetRect);
+   GFX->clear(GFXClearZBuffer | GFXClearStencil | GFXClearTarget, canvasClearColor, 1.0f, 0);
+
+   // Make sure we have a clean matrix state 
+   // before we start rendering anything!   
+   GFX->setWorldMatrix(MatrixF::Identity);
+   GFX->setViewMatrix(MatrixF::Identity);
+   GFX->setProjectionMatrix(MatrixF::Identity);
+
+   {
+      GFXStateBlockDesc d;
+
+      d.cullDefined = true;
+      d.cullMode = GFXCullNone;
+      d.zDefined = true;
+      d.zEnable = false;
+
+      GFXStateBlockRef mDefaultGuiSB = GFX->createStateBlock(d);
+
+      GFX->setClipRect(targetRect);
+      GFX->setStateBlock(mDefaultGuiSB);
+
+      GFXTargetRef origTarget = GFX->getActiveRenderTarget();
+      U32 origStyle = GFX->getCurrentRenderStyle();
+
+      // Clear the zBuffer so GUI doesn't hose object rendering accidentally
+      GFX->clear(GFXClearZBuffer, ColorI(20, 20, 20), 1.0f, 0);
+
+      GFX->setFrustum(frustum);
+      MatrixF mSaveProjection = GFX->getProjectionMatrix();
+      
+      // We're going to be displaying this render at size of this control in
+      // pixels - let the scene know so that it can calculate e.g. reflections
+      // correctly for that final display result.
+      gClientSceneGraph->setDisplayTargetResolution(size);
+
+      // Set the GFX world matrix to the world-to-camera transform, but don't 
+      // change the cameraMatrix in mLastCameraQuery. This is because 
+      // mLastCameraQuery.cameraMatrix is supposed to contain the camera-to-world
+      // transform. In-place invert would save a copy but mess up any GUIs that
+      // depend on that value.
+      CameraQuery camera;
+      GameProcessCameraQuery(&camera);
+
+      MatrixF worldToCamera = transform;
+
+      RotationF tranRot = RotationF(transform);
+      EulerF trf = tranRot.asEulerF(RotationF::Degrees);
+      Point3F pos = transform.getPosition();
+
+      GFX->setWorldMatrix(worldToCamera);
+
+      mSaveProjection = GFX->getProjectionMatrix();
+      MatrixF mSaveModelview = GFX->getWorldMatrix();
+
+      Point2F mSaveWorldToScreenScale = GFX->getWorldToScreenScale();
+      Frustum mSaveFrustum = GFX->getFrustum();
+      mSaveFrustum.setTransform(transform);
+
+      // Set the default non-clip projection as some 
+      // objects depend on this even in non-reflect cases.
+      gClientSceneGraph->setNonClipProjection(mSaveProjection);
+
+      // Give the post effect manager the worldToCamera, and cameraToScreen matrices
+      PFXMGR->setFrameMatrices(mSaveModelview, mSaveProjection);
+
+      //renderWorld(guiViewport);
+      PROFILE_START(GameFunctions_RenderFrame_RenderWorld);
+      FrameAllocator::setWaterMark(0);
+
+      gClientSceneGraph->renderScene(SPT_Reflect, typeMask);
+
+      // renderScene leaves some states dirty, which causes problems if GameTSCtrl is the last Gui object rendered
+      GFX->updateStates();
+
+      AssertFatal(FrameAllocator::getWaterMark() == 0,
+         "Error, someone didn't reset the water mark on the frame allocator!");
+      FrameAllocator::setWaterMark(0);
+      PROFILE_END();
+   }
+
+   PROFILE_START(GameFunctions_RenderFrame_GFXEndScene);
+   GFX->endScene();
+   PROFILE_END();
+
+#ifdef TORQUE_GFX_STATE_DEBUG
+   GFX->getDebugStateManager()->endFrame();
+#endif
+
+   saver.restore();
+
+   PROFILE_END();
+}
+
+//================================================================================================
 static void Process3D()
 {
    MATMGR->updateTime();
@@ -393,10 +637,10 @@ static void Process3D()
 
 static void RegisterGameFunctions()
 {
-   Con::addVariable( "$pref::Camera::distanceScale", TypeF32, &sVisDistanceScale, 
+   Con::addVariable( "$pref::Camera::distanceScale", TypeF32, &CameraAndFOV::sVisDistanceScale, 
       "A scale to apply to the normal visible distance, typically used for tuning performance.\n"
 	   "@ingroup Game");
-   Con::addVariable( "$cameraFov", TypeF32, &sConsoleCameraFov, 
+   Con::addVariable( "$cameraFov", TypeF32, &CameraAndFOV::sConsoleCameraFov, 
       "The camera's Field of View.\n\n"
 	   "@ingroup Game" );
 
@@ -404,7 +648,6 @@ static void RegisterGameFunctions()
    Con::setIntVariable("$TypeMasks::StaticObjectType",         StaticObjectType);
    Con::setIntVariable("$TypeMasks::EnvironmentObjectType",    EnvironmentObjectType);
    Con::setIntVariable("$TypeMasks::TerrainObjectType",        TerrainObjectType);
-   Con::setIntVariable("$TypeMasks::InteriorObjectType",       InteriorObjectType);
    Con::setIntVariable("$TypeMasks::WaterObjectType",          WaterObjectType);
    Con::setIntVariable("$TypeMasks::TriggerObjectType",        TriggerObjectType);
    Con::setIntVariable("$TypeMasks::MarkerObjectType",         MarkerObjectType);

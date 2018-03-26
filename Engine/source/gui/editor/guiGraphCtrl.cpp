@@ -90,12 +90,12 @@ GuiGraphCtrl::GuiGraphCtrl()
 
    AssertWarn( MaxPlots == 6, "Only 6 plot colors initialized.  Update following code if you change MaxPlots." );
 
-   mGraphColor[ 0 ] = ColorF( 1.0, 1.0, 1.0 );
-   mGraphColor[ 1 ] = ColorF( 1.0, 0.0, 0.0 );
-   mGraphColor[ 2 ] = ColorF( 0.0, 1.0, 0.0 );
-   mGraphColor[ 3 ] = ColorF( 0.0, 0.0, 1.0 );
-   mGraphColor[ 4 ] = ColorF( 0.0, 1.0, 1.0 );
-   mGraphColor[ 5 ] = ColorF( 0.0, 0.0, 0.0 );
+   mGraphColor[ 0 ] = LinearColorF( 1.0, 1.0, 1.0 );
+   mGraphColor[ 1 ] = LinearColorF( 1.0, 0.0, 0.0 );
+   mGraphColor[ 2 ] = LinearColorF( 0.0, 1.0, 0.0 );
+   mGraphColor[ 3 ] = LinearColorF( 0.0, 0.0, 1.0 );
+   mGraphColor[ 4 ] = LinearColorF( 0.0, 1.0, 1.0 );
+   mGraphColor[ 5 ] = LinearColorF( 0.0, 0.0, 0.0 );
 }
 
 //-----------------------------------------------------------------------------
@@ -177,7 +177,7 @@ void GuiGraphCtrl::onRender(Point2I offset, const RectI &updateRect)
 
             for( S32 sample = 0; sample < numSamples; ++ sample )
             {                  
-               PrimBuild::begin( GFXTriangleFan, 4 );
+               PrimBuild::begin( GFXTriangleStrip, 4 );
                PrimBuild::color( mGraphColor[ k ] );
 
                F32 offset = F32( getExtent().x ) / F32( MaxDataPoints ) * F32( sample + 1 );
@@ -274,7 +274,7 @@ void GuiGraphCtrl::addDatum(S32 plotID, F32 v)
 
 //-----------------------------------------------------------------------------
 
-float GuiGraphCtrl::getDatum( int plotID, int sample)
+F32 GuiGraphCtrl::getDatum( S32 plotID, S32 sample)
 {
    AssertFatal(plotID > -1 && plotID < MaxPlots, "Invalid plot specified!");
    AssertFatal(sample > -1 && sample < MaxDataPoints, "Invalid sample specified!");

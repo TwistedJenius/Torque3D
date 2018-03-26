@@ -89,6 +89,18 @@ enum ScenePassType
 };
 
 
+/// The type of scene render style
+/// @see SceneRenderState
+enum SceneRenderStyle
+{
+   /// The regular style of rendering
+   SRS_Standard,
+
+   /// Side-by-side style rendering
+   SRS_SideBySide,
+};
+
+
 /// An object that manages the SceneObjects belonging to a scene.
 class SceneManager
 {
@@ -104,6 +116,10 @@ class SceneManager
 
       /// If true, render the AABBs of objects for debugging.
       static bool smRenderBoundingBoxes;
+
+      //A cache list of objects that made it through culling, so we don't have to attempt to re-test
+      //visibility of objects later.
+      Vector< SceneObject* > mRenderedObjectsList;
 
    protected:
 
@@ -129,6 +145,7 @@ class SceneManager
 
       F32 mVisibleDistance;
 
+      F32 mVisibleGhostDistance;
       F32 mNearClip;
 
       FogData mFogData;
@@ -141,7 +158,7 @@ class SceneManager
       /// @name Lighting
       /// @{
 
-      typedef InterpolatedChangeProperty< ColorF > AmbientLightInterpolator;
+      typedef InterpolatedChangeProperty< LinearColorF > AmbientLightInterpolator;
 
       /// Light manager that is active for the scene.
       LightManager* mLightManager;
@@ -254,7 +271,7 @@ class SceneManager
       bool setLightManager( const char *lmName );
 
       /// Return the current global ambient light color.
-      const ColorF& getAmbientLightColor() const { return mAmbientLightColor.getCurrentValue(); }
+      const LinearColorF& getAmbientLightColor() const { return mAmbientLightColor.getCurrentValue(); }
 
       /// Set the time it takes for a new ambient light color to take full effect.
       void setAmbientLightTransitionTime( SimTime time ) { mAmbientLightColor.setTransitionTime( time ); }
@@ -304,6 +321,9 @@ class SceneManager
 
       /// Returns the default visible distance for the scene.
       F32 getVisibleDistance() { return mVisibleDistance; }
+
+      void setVisibleGhostDistance( F32 dist ) { mVisibleGhostDistance = dist; }
+      F32  getVisibleGhostDistance() { return mVisibleGhostDistance;}
 
       /// Used by LevelInfo to set the default near clip plane 
       /// for rendering the scene.

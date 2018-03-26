@@ -573,6 +573,31 @@ function GameCore::onClientEnterGame(%game, %client)
       %client.isAiControlled(),
       %client.isAdmin,
       %client.isSuperAdmin);
+      
+   %entityIds = parseMissionGroupForIds("Entity", "");
+   %entityCount = getWordCount(%entityIds);
+   
+   for(%i=0; %i < %entityCount; %i++)
+   {
+      %entity = getWord(%entityIds, %i);
+      
+      for(%e=0; %e < %entity.getCount(); %e++)
+      {
+         %child = %entity.getObject(%e);
+         if(%child.getCLassName() $= "Entity")
+            %entityIds = %entityIds SPC %child.getID();  
+      }
+      
+      for(%c=0; %c < %entity.getComponentCount(); %c++)
+      {
+         %comp = %entity.getComponentByIndex(%c);
+         
+         if(%comp.isMethod("onClientConnect"))
+         {
+            %comp.onClientConnect(%client);  
+         }
+      }
+   }
 }
 
 function GameCore::onClientLeaveGame(%game, %client)
@@ -639,7 +664,7 @@ function GameCore::loadOut(%game, %player)
    }
    else
    {
-      %player.mountImage(Lurker, 0);
+      %player.mountImage(Ryder, 0);
    }
 }
 
@@ -675,9 +700,6 @@ function GameCore::onDeath(%game, %client, %sourceObject, %sourceClient, %damage
 
    // Clear out the name on the corpse
    %client.player.setShapeName("");
-
-   // Update the numerical Health HUD
-   %client.player.updateHealth();
 
    // Switch the client over to the death cam and unhook the player object.
    if (isObject(%client.camera) && isObject(%client.player))
